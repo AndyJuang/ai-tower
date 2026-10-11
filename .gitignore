@@ -11,3 +11,4 @@ tower.log
 tower.pid
 *.tmp
 node_modules/
+prompt-template.*.local.md

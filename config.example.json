@@ -12,10 +12,23 @@
   "detachScript": "detach.py",
   "queueScripts": [],
   "extraRunners": [],
+  "goodDayHideHours": 6,
+  "manualIssueRegex": "manual|實機",
+  "manualSectionTitle": "需要實機 · 手動測試",
   "issueRepos": [
     "your-name/my-app"
   ],
   "dispatchRepo": "your-name/my-app",
+  "products": {
+    "your-name/my-app": { "name": "My App", "short": "MA", "color": "#8a3b12" },
+    "your-name/my-docs": { "name": "My Docs", "short": "MD", "color": "#6b3fa0" }
+  },
+  "primaryProduct": "MA",
+  "repos": {
+    "your-name/my-docs": { "clone": "{baseDir}/my-docs", "baseBranches": ["main"], "fullTestsCmd": "npm test" }
+  },
+  "promptTemplateOther": "prompt-template.example.md",
+  "worktreeVar": "WT",
   "baseBranches": [
     "main"
   ],
@@ -42,7 +55,6 @@
     }
   },
   "landedKeepMin": 30,
-  "divertedKeepMin": 180,
   "demo": false,
   "tzLabel": "",
   "cutoffHour": 8,

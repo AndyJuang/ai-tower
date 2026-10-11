@@ -29,6 +29,11 @@
     </div>
     <ol class="lane-active" id="park-sched"></ol>
     <ol class="rack park-rack" id="park-rack" data-drop="park" data-empty="沒有符合的 open issue"></ol>
+    <details class="manual-sec" id="manual-sec" hidden>
+      <summary><span class="wr" aria-hidden="true">🔧</span> <span id="manual-title">需要實機 · 手動測試</span> <span class="count" id="manual-count"></span></summary>
+      <p class="hint">背景 agent 沒有 GUI — 這些不能排進 READY，Auto Pilot 也不會選。</p>
+      <ol class="rack manual-rack" id="manual-rack" data-empty="沒有符合的實機驗證 issue"></ol>
+    </details>
   </section>
   <section class="bay" data-bay="ready">
     <header><h2>READY TO FLY <span class="zh">排班</span></h2><span class="count" id="ready-count"></span></header>

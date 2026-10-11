@@ -14,10 +14,12 @@ LOG="$HERE/$A.log"; PROMPT="$HERE/$A-prompt.md"  # = logPattern / promptPattern
 ts() { date -j -f "%Y-%m-%d %H:%M" "$1" +%s 2>/dev/null || date -d "$1" +%s; }
 fmt() { date -r "$1" 2>/dev/null || date -d "@$1"; }
 
+WTX=   # AI Tower: other-repo worktree (WTX)
 case "$A" in
   grok-demo-example) BR=feat/example; START=00:00; CUT="2030-01-01 08:00"; PF=docs/EXAMPLE_PROGRESS.md;;  # #1 example line
   *) echo "bad line $A"; exit 2;;
 esac
+if [ -n "${WTX:-}" ]; then WT="$WTX"; fi   # AI Tower: other-repo worktree (WTX) — tower entries for other repos set WTX
 
 # Agent CLI per airline (line prefix), rebuilt every round so AI Tower's ⚙ model / effort settings apply to the next round.
 agent_cmd() {

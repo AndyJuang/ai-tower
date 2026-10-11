@@ -22,10 +22,12 @@ Agents are shown as airlines — **GK Grok Air**, **CL Claude Airways**, **CX Co
 
 | Bay | Meaning |
 |---|---|
-| **PARK** | open issues nobody is working on (search, milestone and repo filters) |
+| **PARK** | open issues nobody is working on (search, milestone and repo filters). Issues that need a human on a real device (label or title start matching `manualIssueRegex`, default `manual\|實機`) go to a collapsible **🔧 needs a real device** section at the bottom: no drag handle, can't be queued or taken off, never picked by auto pilot |
 | **READY TO FLY** | four airline lanes — drag issues in to queue them; runners between rounds (TAXI) or waiting for quota (HOLDING) also live here |
 | **TAKEOFF** | agent process running now, live elapsed timer |
-| **GOOD DAY** | finished (READY TO MERGE) · STOPPED (intentional, grey) · **DIVERTED** (abnormal exit, red, plus an alert row) |
+| **GOOD DAY** | finished (READY TO MERGE) · STOPPED (intentional, grey) · **DIVERTED** (abnormal exit, red, plus an alert row). **✕ 已知道** hides a card (5 s undo, kept in `data/dismissed.json`); every card auto-hides after `goodDayHideHours` (default 6) |
+
+Flight number = airline code + the line's **primary issue** (first `#N` in its runner-table comment, else in its progress file); other issues show as blue tags.
 
 ### Dispatch
 - Drag a PARK card (by its `≡` handle) into a lane; reorder within a lane; drag back to PARK to unqueue. 5 s undo. Keyboard: Space pick up · ↑↓ reorder · ←→ change lane · Space drop · Esc cancel.
@@ -51,10 +53,14 @@ cp examples/runner.example.sh <logsDir>/runner.sh
 | `baseDir`, `logsDir` | where repos/worktrees and runner logs live (`~`, `{baseDir}` allowed) |
 | `runnerScript` | runner file in `logsDir` with a `case "$A" in … *) …` table (see `examples/runner.example.sh`) |
 | `logPattern`, `promptPattern`, `worktreePattern`, `mainCheckout` | file naming, `{line}` placeholder |
-| `issueRepos`, `dispatchRepo`, `baseBranches` | PARK sources; repo Takeoff may dispatch; base branch order |
+| `issueRepos`, `dispatchRepo`, `baseBranches` | PARK sources; primary repo and its base branch order |
+| `products`, `primaryProduct` | repo → product `{name, short, color}`; every card and issue tag gets a badge (`MA #12`); flight numbers of non-primary products carry the code (`GK MD-12`) |
+| `repos`, `promptTemplateOther`, `worktreeVar` | other repos can take off when they have a local clone (`repos[r].clone`, or auto-found as a git clone directly under `baseDir`); otherwise browse-only. Worktree `<clone>-wt-<line>`, base = `repos[r].baseBranches` or the origin default branch, prompt = `repos[r].promptTemplate` or `promptTemplateOther`. The runner gets a one-time `WTX` hook (backup + `bash -n`) so the case entry can point at that worktree; `worktreeVar` names the runner's worktree variable |
 | `promptTemplate` | Markdown template with `{{issueTitle}}`, `{{issueBody}}`, `{{branch}}`, `{{pushRule}}`, `{{include:file}}` … |
 | `lanes.XX.cap / auto / manualOnly / idleLabel`, `globalCap` | capacity and auto-pilot rules |
 | `agentBins`, `modelCatalog` | optional CLI paths and a static model/effort list per lane (overrides discovery) |
+| `manualIssueRegex`, `manualSectionTitle` | issues that need a real device (matched on labels and the start of the title) and the PARK section title |
+| `goodDayHideHours`, `landedKeepMin` | GOOD DAY auto-hide (default 6 h) and when LANDED cards dim (30 min) |
 | `doneRegex`, `stopByNames`, `tzLabel`, `cutoffHour`, `launchPrefix` | progress "done" marker, who counts as an intentional stop, clock label, runner cutoff hour, launch prefix (default `nice -n 10` [+ `caffeinate -i` on macOS]) |
 
 Local state (`data/`: lane order, settings, issue cache, dispatched list) is gitignored. `titles.json` (optional) maps line/branch → friendly title.
@@ -82,10 +88,12 @@ AI Tower 是一個本機「塔台」：把背景跑的 AI 寫程式代理（Grok
 
 | 區 | 意義 |
 |---|---|
-| **PARK 待辦** | 還沒人做的 open issue（搜尋、milestone、repo 篩選） |
+| **PARK 待辦** | 還沒人做的 open issue（搜尋、milestone、repo 篩選）。需要實機測試的 issue（label 或標題開頭符合 `manualIssueRegex`，預設 `manual\|實機`）放在底部可收合的 **🔧 需要實機** 區：沒有拖曳把手、不能排班或起飛、Auto Pilot 不會選 |
 | **READY TO FLY 排班** | 四條航空公司跑道；拖進來就排班。輪與輪之間（TAXI）或等額度（HOLDING）的 runner 也在這 |
 | **TAKEOFF 飛行中** | agent 程序正在跑，即時計時 |
-| **GOOD DAY 已落地** | 完成（READY TO MERGE／可整合）、STOPPED（刻意停止，灰）、**DIVERTED**（異常結束，紅＋警示列） |
+| **GOOD DAY 已落地** | 完成（READY TO MERGE／可整合）、STOPPED（刻意停止，灰）、**DIVERTED**（異常結束，紅＋警示列）。按 **✕ 已知道** 可隱藏（5 秒內可撤銷，記在 `data/dismissed.json`）；超過 `goodDayHideHours`（預設 6 小時）自動隱藏 |
+
+航班號 = 航空公司代碼 + 該 line 的**主要 issue**（runner 對照表註解中的第一個 `#N`，沒有就看進度檔）；其他 issue 顯示為藍色標籤。
 
 ### 派工
 - 抓 `≡` 把手把 PARK 卡拖進跑道；跑道內可調順序；拖回 PARK 取消排班；5 秒內可撤銷。鍵盤：空白鍵拿起、↑↓ 排序、←→ 換跑道、空白鍵放下、Esc 取消。

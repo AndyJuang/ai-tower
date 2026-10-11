@@ -16,6 +16,8 @@ const { run, readJSON, writeJSON, tpeStamp } = require('./lib/util');
 const ISSUES = require('./lib/issues');
 const DISPATCH = require('./lib/dispatch');
 const MODELS = require('./lib/models');
+const PRODUCTS = require('./lib/products');
+const REPOS = require('./lib/repos');
 const PORT = CFG.port;
 const BASE = CFG.baseDir;
 const L = CFG.logsDir;
@@ -25,8 +27,12 @@ const ORDER_FILE = path.join(DATA, 'queue-order.json');
 const SETTINGS_FILE = path.join(DATA, 'settings.json');
 const POLL_MS = 10000;
 const LANDED_KEEP_MIN = CFG.landedKeepMin || 30;      // visible after landing, then client fades out
-const LANDED_DROP_MIN = LANDED_KEEP_MIN + 2;      // dropped from API after this
-const DIVERTED_KEEP_MIN = CFG.divertedKeepMin || 180;
+const GOODDAY_HIDE_MIN = Math.round((CFG.goodDayHideHours ?? 6) * 60);   // every GOOD DAY card auto-hides after this (default 6 h)
+const LANDED_DROP_MIN = GOODDAY_HIDE_MIN;      // dropped from API after this (LANDED fades after LANDED_KEEP_MIN)
+const DIVERTED_KEEP_MIN = GOODDAY_HIDE_MIN;
+// dismissed GOOD DAY cards ("✕ 已知道"): data/dismissed.json {line: endedAt}; a later run of the same line shows again
+const DISMISS_FILE = path.join(CFG.dataDir, 'dismissed.json');
+function readDismissed() { return readJSON(DISMISS_FILE, {}); }
 const QUEUE_SCRIPTS = CFG.queueScripts || [];
 // session token: embedded in the served page; kept in data/session-token (gitignored, 0600) so it survives restarts
 const TOKEN = (() => {
@@ -59,7 +65,8 @@ function readLineTable() {
     if (!m) continue;
     const body = m[2], comment = m[3] || '';
     const get = k => { const r = body.match(new RegExp('\\b' + k + '=("([^"]*)"|[^;\\s]+)')); return r ? (r[2] !== undefined ? r[2] : r[1]) : null; };
-    table[m[1]] = { line: m[1], branch: get('BR'), start: get('START'), cut: get('CUT'), pf: get('PF'),
+    const rr = comment.match(/\(([\w.-]+\/[\w.-]+)#\d+\)/);   // tower entries end with (owner/repo#N)
+    table[m[1]] = { line: m[1], branch: get('BR'), start: get('START'), cut: get('CUT'), pf: get('PF'), wtx: get('WTX'), repo: rr ? rr[1] : null,
       issues: [...new Set((comment.match(/#\d{2,4}/g) || []))], note: comment.replace(/^\s*#\s*/, '').trim(), runner: CFG.runnerScript };
   }
   for (const x of CFG.extraRunners || []) {
@@ -71,7 +78,7 @@ function readLineTable() {
 const EXTRA = Object.fromEntries((CFG.extraRunners || []).map(x => [x.line, x]));
 const sub = (s, line) => s.replace(/\{line\}/g, line).replace(/\{baseDir\}/g, BASE).replace(/^~(?=\/)/, os.homedir());
 function logFor(line) { return EXTRA[line] ? path.join(L, EXTRA[line].log) : path.join(L, sub(CFG.logPattern, line)); }
-function worktreeFor(line) { return EXTRA[line] ? sub(EXTRA[line].worktree, line) : sub(CFG.worktreePattern, line); }
+function worktreeFor(line) { const t = typeof lastTable === 'object' && lastTable && lastTable[line]; if (t && t.wtx) return t.wtx; return EXTRA[line] ? sub(EXTRA[line].worktree, line) : sub(CFG.worktreePattern, line); }
 const AIRLINES = {
   grok: { key: 'grok', code: 'GK', name: 'Grok Air', agent: 'Grok CLI' },
   claude: { key: 'claude', code: 'CL', name: 'Claude Airways', agent: 'Claude Code' },
@@ -86,10 +93,17 @@ function airlineOf(line) {
   if (line.startsWith('antigravity-')) return AIRLINES.antigravity;
   return { key: 'unknown', code: '??', name: 'Unknown', agent: '?' };
 }
-// flight number = airline code + stable sequence (tower lines: issue number; others: 100 + position in the runner case table)
-function flightNo(line, table) {
+// flight number = airline code + PRIMARY issue number: first issue in the line's mapping (runner comment), else in its progress file,
+// else the -i<N> in the line name; only lines with no issue at all fall back to 100 + position in the runner case table
+function repoOfLine(line) { const x = EXTRA[line]; const t = typeof lastTable === 'object' && lastTable && lastTable[line]; return (t && t.repo) || (x && (x.repo || PRODUCTS.repoForProject(x.project))) || REPO; }
+function primaryIssue(line, table, progressIssue) {
+  const first = ((table[line] && table[line].issues) || [])[0]; if (first) return first.slice(1);
+  if (progressIssue) return String(progressIssue);
+  const m = line.match(/-i(\d+)(?:-|$)/); return m ? m[1] : null;
+}
+function flightNo(line, table, progressIssue) {
   const a = airlineOf(line); if (EXTRA[line] && EXTRA[line].flight) return EXTRA[line].flight;
-  const m = line.match(/-i(\d+)(?:-|$)/); if (m) return a.code + ' ' + m[1];   // tower-dispatched lines: code + issue number
+  const n = primaryIssue(line, table, progressIssue); if (n) return PRODUCTS.flightLabel(a.code, repoOfLine(line), n);
   const i = Object.keys(table).indexOf(line); return a.code + ' ' + (i >= 0 ? 100 + i : 900);
 }
 
@@ -213,7 +227,8 @@ function readProgress(line, info) {
   let txt; try { txt = fs.readFileSync(file, 'utf8'); } catch { return { file: path.relative(BASE, file), missing: true }; }
   const lines = txt.split('\n'); const head = lines.slice(0, 12).join('\n');
   const st = lines.find(l => /(狀態|^\W*Status)\s*[：:]/i.test(l)) || lines.find(l => l.includes('狀態') && !/^\s*[#|]/.test(l)) || '';
-  return { file: path.relative(BASE, file), status: st.replace(/[*#>`-]/g, '').trim().slice(0, 80),
+  const pi = head.match(/#(\d{1,5})\b/);   // primary issue = first #N in the progress header
+  return { file: path.relative(BASE, file), issue: pi ? +pi[1] : null, status: st.replace(/[*#>`-]/g, '').trim().slice(0, 80),
     done: (/(狀態|Status)\s*[：:]/i.test(st) ? st : head).match(DONE_RE) != null && !/進行中|用量上限暫停|in progress/i.test(/(狀態|Status)\s*[：:]/i.test(st) ? st : head) };   // judge the status line itself when there is one (same rule as the runner)
 }
 
@@ -261,7 +276,7 @@ function pumpIssues() {
 function fmtHM(t) { if (!t) return null; const d = new Date(t); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
 async function buildSnapshot() {
   const now = Date.now();
-  const table = readLineTable();
+  const table = readLineTable(); lastTable = table;   // worktreeFor / repoOfLine read it
   const procs = await psSnapshot();
   const { runners, queueAlive, orphans } = mapProcesses(procs);
   const queues = readQueues(queueAlive);
@@ -272,7 +287,7 @@ async function buildSnapshot() {
   const lines = new Set([...Object.keys(runners), ...queued.keys()]);
   for (const k of Object.keys(table)) { try { if (now - fs.statSync(logFor(k)).mtimeMs < Math.max(DIVERTED_KEEP_MIN, LANDED_DROP_MIN) * 60e3 + 3600e3) lines.add(k); } catch {} }
 
-  const strips = [];
+  const strips = []; const dismissed = readDismissed();
   for (const line of lines) {
     const info = table[line] || { line, issues: [] };
     const air = airlineOf(line);
@@ -288,8 +303,8 @@ async function buildSnapshot() {
     const progress = readProgress(line, info);
     let q = queued.get(line);
     if (q && q.relaunch && progress.done) q = null; // queue scripts skip re-launch lines that are already done
-    const s = { id: line, callsign: line, flight: flightNo(line, table), airline: air, project: info.project || CFG.projectName || (REPO || '').split('/').pop() || '',
-      branch: (lastStart && lastStart.branch) || info.branch, issues: info.issues, cutoff: info.cut, progress,
+    const s = { id: line, callsign: line, flight: flightNo(line, table, progress.issue), primary: primaryIssue(line, table, progress.issue), repo: repoOfLine(line), product: PRODUCTS.productOf(repoOfLine(line)), airline: air, project: info.project || CFG.projectName || (REPO || '').split('/').pop() || '',
+      branch: (lastStart && lastStart.branch) || info.branch, issues: info.issues.length ? info.issues : progress.issue ? ['#' + progress.issue] : [], cutoff: info.cut, progress,
       std: starts[0] ? starts[0].t : null, attempt: lastStart ? lastStart.attempt : 0, head: lastStart ? lastStart.head : null,
       runnerPid: runner ? runner.pid : null, agentPid: runner && runner.agent ? runner.agent.pid : null,
       lastEvent: last ? last.raw : null, tags: [], logFile: log ? path.relative(BASE, logFor(line)) : null };
@@ -324,6 +339,7 @@ async function buildSnapshot() {
       s.fade = s.status === 'LANDED' && age > LANDED_KEEP_MIN;
       if (s.std) s.flightMin = Math.round((s.endedAt - s.std) / 60e3);
     }
+    if (s.bay === 'goodday' && dismissed[line] && Math.abs(dismissed[line] - s.endedAt) < 120e3) continue;   // ✕ 已知道
     strips.push(s);
   }
   for (const o of orphans) {
@@ -341,7 +357,8 @@ async function buildSnapshot() {
   }));
   for (const s of strips) {
     const t = readTitles();
-    s.issueMeta = (s.issues || []).map(n => { const k = n.slice(1); const m = issueCache[k]; return { n: k, url: `https://github.com/${REPO}/issues/${k}`, title: m ? m.title : null, pr: m ? m.pr : null }; });
+    if (!s.product) { s.repo = s.repo || REPO; s.product = PRODUCTS.productOf(s.repo); }
+    s.issueMeta = (s.issues || []).map(n => { const k = n.slice(1); const own = s.repo === REPO; const m = own ? issueCache[k] : null; return { n: k, url: `https://github.com/${s.repo}/issues/${k}`, title: m ? m.title : null, pr: m ? m.pr : null, product: s.product.short }; });
     const fromIssue = s.issueMeta.map(m => m.title).find(Boolean);
     s.title = t[s.branch] || t[s.id] || (fromIssue ? cleanTitle(fromIssue) : s.titleHint || s.id.replace(/^[a-z]+-/, '').replace(/-/g, ' '));
     s.issues.forEach(n => wantIssue(n.slice(1)));
@@ -400,14 +417,14 @@ function laneView(lanes, cap, settings) {
   for (const k of LANE_CODES) {
     const c = (cap && cap.lanes[k]) || { running: 0, cap: 0 }; const manual = !settings || settings.mode !== 'AUTO' || !settings.auto[k] || laneCfg(k).manualOnly;
     let free = Math.max(0, Math.min(c.cap - c.running, cap ? cap.globalCap - cap.total : 0)); let slot = 0;
-    v[k] = lanes[k].map(ref => { const i = ISSUES.getIssue(ref); const [repo, n] = ref.split('#'); const dispatchable = repo === REPO;
+    v[k] = lanes[k].map(ref => { const i = ISSUES.getIssue(ref); const [repo, n] = ref.split('#'); const dispatchable = REPOS.dispatchable(repo);
       let etd = null, etdState;
       if (!dispatchable) etdState = 'n/a';
       else if (manual) etdState = 'manual';
       else if (c.holding && c.until > now) { etd = c.until; etdState = 'quota'; }
       else if (slot < free) { etd = Math.max(now + POLL_MS, lastAutoAt + 90e3) + slot * 90e3; slot++; etdState = 'auto'; }
       else etdState = 'full';
-      return { ref, repo, number: +n, title: i ? i.title : null, url: i ? i.url : `https://github.com/${repo}/issues/${n}`, milestone: i ? i.milestone : null, labels: i ? i.labels : [], flight: `${k} ${n}`,
+      return { ref, repo, number: +n, title: i ? i.title : null, url: i ? i.url : `https://github.com/${repo}/issues/${n}`, milestone: i ? i.milestone : null, labels: i ? i.labels : [], flight: PRODUCTS.flightLabel(k, repo, n), product: PRODUCTS.productOf(repo),
         dispatchable, queuedAt: qa[ref] || null, etd, etdState }; });
   }
   return v;
@@ -416,19 +433,20 @@ function autoPick(snap, lanes, settings) {
   const cap = snap.capacity;
   for (const k of LANE_CODES) {
     if (laneCfg(k).manualOnly || !settings.auto[k]) continue;
-    const ref = lanes[k].find(r => r.split('#')[0] === REPO); if (!ref) continue;
+    const ref = lanes[k].find(r => REPOS.dispatchable(r.split('#')[0]) && !ISSUES.isManualRef(r)); if (!ref) continue;
     const c = cap.lanes[k];
     const blocked = c.holding ? `${k} holding for quota until ${tpeStamp(c.until).slice(11, 16)}` : c.running >= c.cap ? `${k} at capacity ${c.running}/${c.cap}` : cap.total >= cap.globalCap ? `global cap ${cap.total}/${cap.globalCap}` : null;
-    return { lane: k, ref, flight: `${k} ${ref.split('#')[1]}`, blocked, eta: blocked ? null : Math.max(Date.now() + POLL_MS, lastAutoAt + 90e3) };
+    return { lane: k, ref, flight: PRODUCTS.flightLabel(k, ref.split('#')[0], ref.split('#')[1]), blocked, eta: blocked ? null : Math.max(Date.now() + POLL_MS, lastAutoAt + 90e3) };
   }
   return null;
 }
 async function doTakeoff(ref, lane, mode) {
   if (!LANE_CODES.includes(lane)) throw new Error('bad lane');
   if (mode === 'auto' && laneCfg(lane).manualOnly) throw new Error(lane + ' is manual-only');
+  if (ISSUES.isManualRef(ref)) throw new Error('manual issue');   // needs a human on a real device
   const issue = ISSUES.getIssue(ref);
   const cap = snapshot.capacity || capacity(snapshot.strips || []);
-  const r = await DISPATCH.takeoff(CFG, { ref, lane, mode, issue, table: lastTable, runnersAlive: cap.total });
+  const r = await DISPATCH.takeoff(CFG, { ref, lane, mode, issue, table: lastTable, runnersAlive: cap.total, clone: issue && REPOS.clones()[issue.repo], product: issue && PRODUCTS.productOf(issue.repo) });
   dispatched.push({ ref, lane, line: r.line, branch: r.branch, at: r.at, mode }); saveDispatched();
   const lanes = readLanes(); lanes[lane] = lanes[lane].filter(x => x !== ref); writeLanes(lanes);
   setTimeout(refresh, 3000);
@@ -436,7 +454,7 @@ async function doTakeoff(ref, lane, mode) {
 }
 function excludeSets(table) {
   const ex = {}; const add = (repo, n) => { (ex[repo] = ex[repo] || new Set()).add(n); };
-  for (const t of Object.values(table)) for (const i of t.issues || []) add(REPO, +i.slice(1));
+  for (const t of Object.values(table)) for (const i of t.issues || []) add(t.repo || REPO, +i.slice(1));
   for (const d of dispatched) { const [repo, n] = d.ref.split('#'); add(repo, +n); }
   return ex;
 }
@@ -447,16 +465,18 @@ async function refresh() {
   building = (async () => {
     if (CFG.demo) { snapshot = demoSnapshot(); return; }
     const snap = await buildSnapshot();
-    lastTable = readLineTable();
+    lastTable = readLineTable(); await REPOS.discover(CFG).catch(() => {});
     ISSUES.refreshIssues().catch(() => {});
     const lanes = readLanes(); const settings = readSettings();
+    { const drop = LANE_CODES.flatMap(k => lanes[k].filter(r => ISSUES.isManualRef(r)));   // a lane may hold a ref queued before it was recognised as 實機驗證
+      if (drop.length) { for (const k of LANE_CODES) lanes[k] = lanes[k].filter(r => !drop.includes(r)); writeLanes(lanes); DISPATCH.dlog(DISPATCH.ctx(CFG), `UNQUEUE manual (needs device) ${drop.join(' ')}`); } }
     snap.capacity = capacity(snap.strips);
     const queued = new Set(Object.values(lanes).flat());
     snap.park = ISSUES.park(excludeSets(lastTable), queued);
     snap.lanes = laneView(lanes, snap.capacity, settings);
     snap.settings = settings;
     snap.laneCfg = Object.fromEntries(LANE_CODES.map(k => { const c = laneCfg(k); return [k, { cap: c.cap, manualOnly: c.manualOnly, idleLabel: c.idleLabel, airline: c.airline, agent: c.agent }]; }));
-    snap.dispatchRepo = REPO;
+    snap.dispatchRepo = REPO; snap.products = { primary: PRODUCTS.PRIMARY, list: PRODUCTS.list() }; snap.dispatchableRepos = Object.keys(REPOS.clones());
     const pick = autoPick(snap, lanes, settings);
     snap.autopilot = { mode: settings.mode, next: pick, note: autoNote };
     try { snap.models = MODELS.view(CFG); } catch (e) { snap.models = { error: e.message }; }
@@ -511,8 +531,18 @@ const server = http.createServer(async (req, res) => {
       if (CFG.demo) { const r = require('./lib/demo').mutate(demoState, url.pathname, j); refresh(); return send(res, 200, JSON.stringify(r)); }
       if (url.pathname === '/api/lanes') {
         const lanes = readLanes();
-        for (const k of LANE_CODES) if (Array.isArray(j.lanes && j.lanes[k])) lanes[k] = [...new Set(j.lanes[k].filter(x => typeof x === 'string' && REF_RE.test(x)))].slice(0, 100);
+        const blocked = [];
+        for (const k of LANE_CODES) if (Array.isArray(j.lanes && j.lanes[k])) lanes[k] = [...new Set(j.lanes[k].filter(x => typeof x === 'string' && REF_RE.test(x) && (!ISSUES.isManualRef(x) || !blocked.push(x))))].slice(0, 100);
+        if (blocked.length) return send(res, 409, JSON.stringify({ error: 'manual issue', refs: blocked }));   // 實機驗證 issues can't be queued for a background agent
         writeLanes(lanes); refresh(); return send(res, 200, JSON.stringify({ lanes }));
+      }
+      if (url.pathname === '/api/dismiss') {   // hide a finished GOOD DAY card (undo = same call with undo:true)
+        if (typeof j.id !== 'string' || !/^[a-z0-9][a-z0-9-]{0,80}$/.test(j.id)) return send(res, 400, JSON.stringify({ error: 'bad id' }));
+        const d = readDismissed();
+        if (j.undo) delete d[j.id];
+        else { const st = (snapshot.strips || []).find(x => x.id === j.id && x.bay === 'goodday'); if (!st) return send(res, 404, JSON.stringify({ error: 'not in GOOD DAY' })); d[j.id] = st.endedAt; }
+        writeJSON(DISMISS_FILE, d); DISPATCH.dlog(DISPATCH.ctx(CFG), `${j.undo ? 'UNDISMISS' : 'DISMISS'} ${j.id}`); refresh();
+        return send(res, 200, JSON.stringify({ ok: true }));
       }
       if (url.pathname === '/api/settings') {
         const cur = readSettings();
@@ -531,11 +561,12 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === '/api/preview') {
         if (!REF_RE.test(j.ref || '') || !LANE_CODES.includes(j.lane)) return send(res, 400, JSON.stringify({ error: 'bad ref/lane' }));
         const issue = ISSUES.getIssue(j.ref); if (!issue) return send(res, 404, JSON.stringify({ error: 'issue not in cache' }));
-        const plan = DISPATCH.planFor(issue, j.lane, lastTable); const cap = snapshot.capacity;
+        const prim = issue.repo === REPO; const plan = DISPATCH.planFor(issue, j.lane, lastTable, prim ? null : PRODUCTS.productOf(issue.repo).short); const cap = snapshot.capacity;
         const warn = [];
-        if (issue.repo !== REPO) warn.push('POC: only ' + REPO + ' can be dispatched');
+        if (!REPOS.dispatchable(issue.repo)) warn.push('browse-only: no local clone of ' + issue.repo);
+        else if (issue.repo !== REPO) warn.push(`other repo: worktree from ${REPOS.clones()[issue.repo]}, generic prompt template, base = its default branch`);
         if (cap) { const c = cap.lanes[j.lane]; if (c.running >= c.cap) warn.push(`${j.lane} over its cap (${c.running}/${c.cap}) — manual takeoff still allowed`); if (c.holding) warn.push(`${j.lane} is holding for quota`); if (cap.total >= cap.globalCap) warn.push(`global cap reached ${cap.total}/${cap.globalCap} — takeoff will be refused`); }
-        return send(res, 200, JSON.stringify({ ref: j.ref, lane: j.lane, agent: plan.agent, airline: plan.airline, line: plan.line, branch: plan.branch, pf: plan.pf, base: (CFG.baseBranches || ['main'])[0], issue: { number: issue.number, title: issue.title, milestone: issue.milestone }, warn }));
+        return send(res, 200, JSON.stringify({ ref: j.ref, lane: j.lane, agent: plan.agent, airline: plan.airline, line: plan.line, branch: plan.branch, pf: plan.pf, base: prim ? 'origin/' + (CFG.baseBranches || ['main'])[0] : 'origin/<default branch>', repo: issue.repo, product: PRODUCTS.productOf(issue.repo), clone: REPOS.clones()[issue.repo] || null, issue: { number: issue.number, title: issue.title, milestone: issue.milestone }, warn }));
       }
       if (url.pathname === '/api/takeoff') {
         if (!REF_RE.test(j.ref || '') || !LANE_CODES.includes(j.lane)) return send(res, 400, JSON.stringify({ error: 'bad ref/lane' }));

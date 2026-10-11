@@ -27,6 +27,7 @@
   function toast(msg, kind) { const t = $('#toast'); t.textContent = msg; t.className = 'toast ' + (kind || ''); t.hidden = false; clearTimeout(t._h); t._h = setTimeout(() => { t.hidden = true; }, kind === 'err' ? 12000 : 6000); }
   const FRIENDLY = {
     'bad token': '塔台連線憑證已更新，自動重試也沒成功 — 請重新整理頁面（⌘R）再按一次',
+    'manual issue': '這張是實機驗證 issue — 背景 agent 沒有 GUI，不能排班或起飛，請手動測試',
     'bad origin': '請從 http://127.0.0.1 塔台網址開啟這個頁面再操作',
     'bad host': '請用 http://127.0.0.1 開啟塔台（不支援其他主機名稱）',
     'bad content-type': '瀏覽器送出的格式不對，請重新整理頁面',
@@ -108,14 +109,15 @@
   }
   function stripHTML(s) {
     const tags = (s.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('');
-    const iss = (s.issueMeta || []).slice(0, 3).map(m => `<a class="iss" href="${esc(m.url)}" target="_blank" rel="noopener" title="${esc(m.title || '')}">#${esc(m.n)}</a>`).join('');
-    const fade = s.status === 'LANDED' && s.endedAt && now() - s.endedAt > 30 * 60e3 ? ' fade gone' : '';
+    const iss = (s.issueMeta || []).filter(m => m.n !== s.primary).slice(0, 3).map(m => `<a class="iss" href="${esc(m.url)}" target="_blank" rel="noopener" title="${esc(m.title || '')}">${esc(m.product ? m.product + ' ' : '')}#${esc(m.n)}</a>`).join('');
+    const fade = s.status === 'LANDED' && s.endedAt && now() - s.endedAt > 30 * 60e3 ? ' fade' : '';   // dimmed after 30 min; the server hides GOOD DAY cards after goodDayHideHours (default 6 h)
+    const pm = (s.issueMeta || []).find(m => m.n === s.primary);
     return `<li class="strip a-${s.airline.key} s-${s.status}${fade}${open.has(s.id) ? ' open' : ''}" data-id="${esc(s.id)}">
       <div class="band"></div><div class="main">
-        <div class="flt">${fin(s.airline.key, 22)}<b class="fno">${esc(s.flight || s.airline.code)}</b><span class="aname">${esc(s.airline.name)}</span><span class="agentname">${esc(s.airline.agent || '')}</span></div>
+        <div class="flt">${fin(s.airline.key, 22)}${pm ? `<a class="fno" href="${esc(pm.url)}" target="_blank" rel="noopener" title="#${esc(pm.n)} ${esc(pm.title || '')}">${esc(s.flight)}</a>` : `<b class="fno">${esc(s.flight || s.airline.code)}</b>`}${prod(s.product)}<span class="aname">${esc(s.airline.name)}</span><span class="agentname">${esc(s.airline.agent || '')}</span></div>
         <div class="ttl" title="${esc(s.title)}">${esc(s.title || s.id)}</div><div class="line">${esc(s.callsign)}</div>
         <div class="time">${timeBlock(s)}</div>
-        <div class="row"><span class="chip st-${s.status}">${CHIP[s.status](s)}</span>${iss}${tags}<button type="button" class="expand" aria-expanded="${open.has(s.id)}">${open.has(s.id) ? '收起 ▴' : '詳細 ▾'}</button></div>
+        <div class="row"><span class="chip st-${s.status}">${CHIP[s.status](s)}</span>${iss}${tags}${s.bay === 'goodday' ? `<button type="button" class="dismiss" data-id="${esc(s.id)}" title="從 GOOD DAY 移除（5 秒內可撤銷）" aria-label="已知道，移除 ${esc(s.flight || s.id)}">✕ 已知道</button>` : ''}<button type="button" class="expand" aria-expanded="${open.has(s.id)}">${open.has(s.id) ? '收起 ▴' : '詳細 ▾'}</button></div>
       </div><div class="more">${detail(s)}</div></li>`;
   }
   function etdBlock(i) {
@@ -123,18 +125,29 @@
     const sub = st === 'quota' ? '等額度恢復' : st === 'auto' ? 'AUTO PILOT' : st === 'full' ? '滿載中' : st === 'manual' ? 'MANUAL' : '';
     return big(lab, flap(i.etd ? hm(i.etd) : '--:--')) + `<span>${sub ? sub + '<br>' : ''}排入 ${i.queuedAt ? hm(i.queuedAt) : hm(now())}</span>`;
   }
+  function prod(p) { return p ? `<span class="prod"${p.color ? ` style="--pc:${esc(p.color)}"` : ''} title="${esc(p.name)}（${esc(p.repo)}）">${esc(p.short)}</span>` : ''; }
+  function pshort(p) { return p ? p.short + ' ' : ''; }
+  function manualHTML(i) {   // 實機驗證: needs a human on a real device — no handle, not draggable, no takeoff
+    const ms = i.milestone ? `<span class="ms">${esc(i.milestone)}</span>` : '<span class="ms none">no milestone</span>';
+    return `<li class="qitem manual" data-ref="${esc(i.ref)}" aria-disabled="true">
+      <div class="band"></div><div class="main">
+        <div class="flt"><b class="fno park">#${esc(i.number)}</b>${ms}${prod(i.product)}
+          <a class="iss" href="${esc(i.url)}" target="_blank" rel="noopener">${esc(pshort(i.product))}#${esc(i.number)} ↗</a></div>
+        <div class="ttl">${esc(i.title || i.ref)}</div>
+      </div>
+      <div class="wstamp" title="需要實機 — 不能派給背景 agent"><span>🔧</span><small>實機</small></div></li>`;
+  }
   function qitemHTML(i, lane) {
-    const other = data && i.repo !== data.dispatchRepo;
     const ms = i.milestone ? `<span class="ms">${esc(i.milestone)}</span>` : '<span class="ms none">no milestone</span>';
     const air = lane ? KEY[lane] : null;
     return `<li class="qitem${lane ? ' a-' + air : ''}" data-ref="${esc(i.ref)}" tabindex="-1">
       <div class="band"></div><div class="main">
-        <div class="flt">${lane ? fin(air, 20) + `<b class="fno">${esc(lane)} ${esc(i.number)}</b>` : `<b class="fno park">#${esc(i.number)}</b>`}${ms}${other ? `<span class="repo">${esc(i.repo.split('/')[1])}</span>` : ''}
-          <a class="iss" href="${esc(i.url)}" target="_blank" rel="noopener">#${esc(i.number)} ↗</a></div>
+        <div class="flt">${lane ? fin(air, 20) + `<b class="fno">${esc(i.flight || lane + ' ' + i.number)}</b>` : `<b class="fno park">#${esc(i.number)}</b>`}${ms}${prod(i.product)}
+          <a class="iss" href="${esc(i.url)}" target="_blank" rel="noopener">${esc(pshort(i.product))}#${esc(i.number)} ↗</a></div>
         <div class="ttl">${esc(i.title || i.ref)}</div>
         ${lane ? `<div class="time">${etdBlock(i)}</div>` : ''}
       </div>
-      ${lane ? `<div class="tk"><button type="button" class="takeoff-btn" ${i.dispatchable === false ? 'disabled title="POC: only the dispatch repo can take off"' : ''}>✈ Takeoff</button></div>` : ''}
+      ${lane ? `<div class="tk"><button type="button" class="takeoff-btn" ${i.dispatchable === false ? 'disabled title="只能瀏覽：這台 Mac 上找不到這個 repo 的本機 clone"' : ''}>✈ Takeoff</button></div>` : ''}
       <button type="button" class="handle" aria-label="移動 #${esc(i.number)}：空白鍵拿起、上下鍵排序、左右鍵換跑道、空白鍵放下" aria-pressed="false" title="拖曳">≡</button></li>`;
   }
 
@@ -154,6 +167,13 @@
     const shown = inRepo.filter(i => (!filt.ms || (i.milestone || '—') === filt.ms) && (!q || (i.title || '').toLowerCase().includes(q) || String(i.number).includes(q.replace('#', ''))));
     $('#park-rack').innerHTML = shown.map(i => qitemHTML(i, null)).join('');
     $('#park-count').textContent = shown.length + (shown.length !== park.length ? '/' + park.length : '');
+    // 實機驗證 (needs a real device): same filters, separate collapsible section, never draggable
+    const man = (data.park && data.park.manual) || [];
+    const manShown = man.filter(i => (filt.repo === '*' || i.repo === filt.repo) && (!filt.ms || (i.milestone || '—') === filt.ms) && (!q || (i.title || '').toLowerCase().includes(q) || String(i.number).includes(q.replace('#', ''))));
+    const msec = $('#manual-sec'); msec.hidden = !man.length;
+    if (data.park && data.park.manualTitle) $('#manual-title').textContent = data.park.manualTitle;
+    $('#manual-rack').innerHTML = manShown.map(manualHTML).join('');
+    $('#manual-count').textContent = manShown.length + (manShown.length !== man.length ? '/' + man.length : '');
     // READY lanes
     const cap = data.capacity || { lanes: {} }; const lc = data.laneCfg || {}; const set = data.settings || { auto: {} };
     $('#lanes').innerHTML = LANES.map(k => {
@@ -200,6 +220,7 @@
 
   // ---------- filters / toggles / expand ----------
   function saveFilt() { localStorage.setItem('tower.filter', JSON.stringify(filt)); render(); }
+  { const m = $('#manual-sec'); try { m.open = localStorage.getItem('tower.manualOpen') === '1'; } catch {} m.addEventListener('toggle', () => { try { localStorage.setItem('tower.manualOpen', m.open ? '1' : '0'); } catch {} }); }
   $('#f-q').value = filt.q;
   $('#f-q').addEventListener('input', e => { filt.q = e.target.value; saveFilt(); });
   $('#f-ms').addEventListener('change', e => { filt.ms = e.target.value; saveFilt(); });
@@ -210,6 +231,10 @@
     const sw = e.target.closest('.auto-sw');
     if (sw) { const k = sw.dataset.lane; const cur = data.settings.auto[k]; try { await post('/api/settings', { auto: { [k]: !cur } }); load(); } catch (er) { toast(er.message, 'err'); } return; }
     const tb = e.target.closest('.takeoff-btn'); if (tb) { openConfirm(tb); return; }
+    const dm = e.target.closest('.dismiss');
+    if (dm) { const id = dm.dataset.id; const st = (data.strips || []).find(x => x.id === id); const label = st ? (st.flight || id) : id;
+      data.strips = (data.strips || []).filter(x => x.id !== id); render(); showUndo({ dismiss: id, label }); announce(`${label} 已從 GOOD DAY 移除`);
+      try { await post('/api/dismiss', { id }); } catch (er) { toast('移除失敗：' + er.message, 'err'); load(); } return; }
     const mb = e.target.closest('.mdl, .mdl-line'); if (mb) { openModels(mb); return; }
     if (e.target.closest('.handle, a, button, .pop')) { if (!e.target.closest('.expand')) return; }
     const li = e.target.closest('.strip'); if (!li) return;
@@ -262,7 +287,7 @@
       const p = await post('/api/preview', { ref, lane });
       pop.innerHTML = `<div class="pop-title">${fin(KEY[lane], 22)} 確認起飛 ${esc(lane)} ${esc(p.issue ? p.issue.number : '')}</div>
         <dl><dt>Agent</dt><dd>${esc(p.airline)} · ${esc(p.agent)}</dd><dt>Issue</dt><dd>#${esc(p.issue.number)} ${esc(p.issue.title)}</dd>
-        <dt>Branch</dt><dd><code>${esc(p.branch)}</code></dd><dt>Line</dt><dd><code>${esc(p.line)}</code></dd><dt>Base</dt><dd><code>origin/${esc(p.base)}</code></dd></dl>
+        <dt>Branch</dt><dd><code>${esc(p.branch)}</code></dd><dt>Line</dt><dd><code>${esc(p.line)}</code></dd><dt>Base</dt><dd><code>${esc(p.base)}</code></dd>${p.product ? `<dt>Product</dt><dd>${prod(p.product)} ${esc(p.product.name)} <small>${esc(p.repo)}</small></dd>` : ''}</dl>
         ${(p.warn || []).map(w => `<p class="warn">⚠ ${esc(w)}</p>`).join('')}
         <div class="pop-actions"><button type="button" class="cancel">取消</button><button type="button" class="go">✈ 確認起飛</button></div>`;
       place(pop, btn);
@@ -287,20 +312,22 @@
     if (JSON.stringify(before) === JSON.stringify(after)) { render(); announce('沒有變更'); return; }
     // optimistic local update
     const byRef = {}; (data.park.issues || []).forEach(i => { byRef[i.ref] = i; }); LANES.forEach(k => (data.lanes[k] || []).forEach(i => { byRef[i.ref] = i; }));
-    for (const k of LANES) data.lanes[k] = after[k].map(r => ({ ...byRef[r], flight: `${k} ${r.split('#')[1]}` }));
+    for (const k of LANES) data.lanes[k] = after[k].map(r => ({ ...byRef[r], flight: `${k} ${byRef[r] && byRef[r].product && data.products && byRef[r].product.short !== data.products.primary ? byRef[r].product.short + '-' : ''}${r.split('#')[1]}` }));
     const inLanes = new Set(Object.values(after).flat()); data.park.issues = Object.values(byRef).filter(i => !inLanes.has(i.ref)).sort((a, b) => (a.milestone || '~').localeCompare(b.milestone || '~', undefined, { numeric: true }) || a.number - b.number);
     render(); showUndo(before);
     announce(to === 'park' ? `#${ref.split('#')[1]} 移回 PARK` : `#${ref.split('#')[1]} 排入 ${to} 第 ${after[to].indexOf(ref) + 1} 位`);
     try { await post('/api/lanes', { lanes: after }); load(); } catch (e) { toast('儲存失敗：' + e.message, 'err'); }
   }
   function showUndo(before) {
-    undoState = before; const u = $('#undo'); u.hidden = false;
+    undoState = before && before.dismiss ? before : { lanes: before }; const u = $('#undo'); u.hidden = false;
+    $('#undo-btn').textContent = undoState.dismiss ? `↩ 撤銷：把 ${undoState.label} 放回 GOOD DAY` : '↩ 撤銷剛才的排序調整';
     const bar = u.querySelector('.undo-bar'); bar.style.animation = 'none'; void bar.offsetWidth; bar.style.animation = '';
     clearTimeout(undoTimer); undoTimer = setTimeout(() => { u.hidden = true; undoState = null; }, 5000);
   }
   $('#undo-btn').addEventListener('click', async () => {
     if (!undoState) return; const before = undoState; undoState = null; $('#undo').hidden = true; clearTimeout(undoTimer);
-    try { await post('/api/lanes', { lanes: before }); } catch (e) {} announce('排程已撤銷'); load();
+    if (before.dismiss) { try { await post('/api/dismiss', { id: before.dismiss, undo: true }); } catch (e) { toast(e.message, 'err'); } announce('已放回 GOOD DAY'); load(); return; }
+    try { await post('/api/lanes', { lanes: before.lanes }); } catch (e) {} announce('排程已撤銷'); load();
   });
 
   // ---------- placeholder hint ----------
