@@ -1,4 +1,4 @@
-# AI Tower ✈ `v0.2.0`
+# AI Tower ✈ `v0.2.1`
 
 **A local control tower for background AI coding agents** — shows every agent job as a retro flight strip and lets you dispatch GitHub issues to agents (Grok CLI, Claude Code, Codex CLI, Antigravity) with one **Takeoff** button.
 
@@ -27,7 +27,9 @@ Agents are shown as airlines — **GK Grok Air**, **CL Claude Airways**, **CX Co
 | **TAKEOFF** | agent process running now, live elapsed timer |
 | **GOOD DAY** | finished (READY TO MERGE) · STOPPED (intentional, grey) · **DIVERTED** (abnormal exit, red, plus an alert row). **✕ 已知道** hides a card (5 s undo, kept in `data/dismissed.json`); every card auto-hides after `goodDayHideHours` (default 6) |
 
-Above the four bays, **StarBase** (v0.2.0) shows three DEV Grok Bot pads — 沃茲 (Starship / desktop), 克雷格 (Falcon 9 / iPhone·iPad), 強尼 (McGregor stand / design). Other agents are ignored. See [StarBase](#starbase).
+Above the four bays, **StarBase** (v0.2.1) shows three DEV Grok Bot pads — 沃茲 (Starship / desktop), 克雷格 (Falcon 9 / iPhone·iPad), 強尼 (McGregor stand / design). Other agents are ignored. See [StarBase](#starbase).
+
+v0.2.1 — StarBase visuals: bigger rockets, lattice towers, stars, glow, fueling vapor.
 
 Flight number = airline code + the line's **primary issue** (first `#N` in its runner-table comment, else in its progress file); other issues show as blue tags.
 
@@ -131,7 +133,9 @@ AI Tower 是一個本機「塔台」：把背景跑的 AI 寫程式代理（Grok
 | **TAKEOFF 飛行中** | agent 程序正在跑，即時計時 |
 | **GOOD DAY 已落地** | 完成（READY TO MERGE／可整合）、STOPPED（刻意停止，灰）、**DIVERTED**（異常結束，紅＋警示列）。按 **✕ 已知道** 可隱藏（5 秒內可撤銷，記在 `data/dismissed.json`）；超過 `goodDayHideHours`（預設 6 小時）自動隱藏 |
 
-最上層 **StarBase**（v0.2.0）只顯示三位 DEV Grok Bot：沃茲（Starship／桌面 App）、克雷格（Falcon 9／iPhone·iPad）、強尼（麥格雷戈測試平台／設計）。其他 agent 忽略。見下方「StarBase」。
+最上層 **StarBase**（v0.2.1）只顯示三位 DEV Grok Bot：沃茲（Starship／桌面 App）、克雷格（Falcon 9／iPhone·iPad）、強尼（麥格雷戈測試平台／設計）。其他 agent 忽略。見下方「StarBase」。
+
+v0.2.1 — StarBase 視覺：火箭加大、格子鋼塔、星空、光暈、加注蒸氣。
 
 航班號 = 航空公司代碼 + 該 line 的**主要 issue**（runner 對照表註解中的第一個 `#N`，沒有就看進度檔）；其他 issue 顯示為藍色標籤。
 

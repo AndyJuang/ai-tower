@@ -195,9 +195,9 @@
       const recent = doneAt && (now() - doneAt) <= 90e3;
       const trans = sbPrev.get(t.id) && sbPrev.get(t.id) !== 'done';
       if (recent || trans) {
-        sbLift.set(agentName, { id: t.id, until: now() + 2600 });
+        sbLift.set(agentName, { id: t.id, until: now() + 3700 });
         clearTimeout(sbLiftTimer.get(agentName));
-        sbLiftTimer.set(agentName, setTimeout(() => { sbPlayed.add(t.id); sbLift.delete(agentName); if (!busy) render(); }, 2700));
+        sbLiftTimer.set(agentName, setTimeout(() => { sbPlayed.add(t.id); sbLift.delete(agentName); if (!busy) render(); }, 3800));
         return t;
       }
       sbPlayed.add(t.id);
@@ -205,103 +205,170 @@
     return null;
   }
   const SB_CHIP = { queued: 'T- 待命', in_progress: '加注中', blocked: 'HOLD · 卡住', done: '已升空', empty: '待命' };
+  const SB_STAR_N = 36;
   function sbStars(seed) {
     let s = seed >>> 0, out = '';
-    for (let i = 0; i < 42; i++) {
+    for (let i = 0; i < SB_STAR_N; i++) {
       s = (Math.imul(s, 1664525) + 1013904223) >>> 0; const x = s % 480;
-      s = (Math.imul(s, 1664525) + 1013904223) >>> 0; const y = s % 118;
-      s = (Math.imul(s, 1664525) + 1013904223) >>> 0; const r = 0.3 + (s % 8) / 16;
-      out += `<circle class="sb-star t${(i % 3) + 1}" cx="${x}" cy="${y}" r="${r.toFixed(2)}" fill="#e8eef8"/>`;
+      s = (Math.imul(s, 1664525) + 1013904223) >>> 0; const y = s % 150;
+      s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
+      const r = 0.22 + (s % 16) / 11;
+      const op = 0.28 + (s % 12) / 18;
+      out += `<circle class="sb-star t${(i % 3) + 1}" cx="${x}" cy="${y}" r="${r.toFixed(2)}" fill="#e8eef8" opacity="${op.toFixed(2)}"/>`;
     }
     return out;
   }
+  function sbX(x, y, w, h, n, stroke) {
+    let o = '';
+    const dy = h / n;
+    for (let i = 0; i < n; i++) {
+      const y0 = y + i * dy;
+      o += `<line x1="${x}" y1="${y0}" x2="${x + w}" y2="${y0 + dy}" stroke="${stroke}" stroke-width="1.15"/>`;
+      o += `<line x1="${x + w}" y1="${y0}" x2="${x}" y2="${y0 + dy}" stroke="${stroke}" stroke-width="1.15"/>`;
+    }
+    return o;
+  }
   function sbSky(id, seed) {
     return `<defs>
-      <linearGradient id="${id}-sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#05070e"/><stop offset=".55" stop-color="#101a2c"/><stop offset=".82" stop-color="#1a2436"/><stop offset="1" stop-color="#2a2218"/></linearGradient>
-      <linearGradient id="${id}-steel" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#8d949b"/><stop offset=".45" stop-color="#e4e7ea"/><stop offset="1" stop-color="#6e757c"/></linearGradient>
-      <linearGradient id="${id}-white" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#d8d4c8"/><stop offset=".5" stop-color="#f7f4ea"/><stop offset="1" stop-color="#c4c0b4"/></linearGradient>
-      <radialGradient id="${id}-flood" cx=".5" cy="0" r="1"><stop offset="0" stop-color="#ffd48a" stop-opacity=".22"/><stop offset="1" stop-color="#ffd48a" stop-opacity="0"/></radialGradient>
+      <linearGradient id="${id}-sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#03050c"/><stop offset=".42" stop-color="#0c1730"/><stop offset=".72" stop-color="#1a2744"/><stop offset=".88" stop-color="#3a2a22"/><stop offset="1" stop-color="#1a1612"/></linearGradient>
+      <linearGradient id="${id}-hz" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb060" stop-opacity="0"/><stop offset=".35" stop-color="#ff9a4a" stop-opacity=".32"/><stop offset=".7" stop-color="#4a68a8" stop-opacity=".22"/><stop offset="1" stop-color="#1a1612" stop-opacity="0"/></linearGradient>
+      <linearGradient id="${id}-steel" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#5c636a"/><stop offset=".16" stop-color="#cfd5db"/><stop offset=".42" stop-color="#f7f8fa"/><stop offset=".7" stop-color="#b4bcc4"/><stop offset="1" stop-color="#4e555c"/></linearGradient>
+      <linearGradient id="${id}-white" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#b8b4a8"/><stop offset=".2" stop-color="#f4f1e6"/><stop offset=".55" stop-color="#fffdf6"/><stop offset="1" stop-color="#c4c0b4"/></linearGradient>
+      <radialGradient id="${id}-flood" cx=".5" cy="0" r="1"><stop offset="0" stop-color="#ffe08a" stop-opacity=".42"/><stop offset=".45" stop-color="#ffd48a" stop-opacity=".16"/><stop offset="1" stop-color="#ffd48a" stop-opacity="0"/></radialGradient>
+      <radialGradient id="${id}-mw" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#c8d4f0" stop-opacity=".16"/><stop offset="1" stop-color="#9bb4d8" stop-opacity="0"/></radialGradient>
+      <filter id="${id}-glow" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="2.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+      <filter id="${id}-soft" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="4"/></filter>
     </defs>
-    <rect width="480" height="150" fill="url(#${id}-sky)"/>${sbStars(seed)}
-    <polygon points="0,20 70,122 20,122" fill="url(#${id}-flood)"/><polygon points="480,16 430,122 470,122" fill="url(#${id}-flood)"/>
-    <rect x="0" y="122" width="480" height="28" fill="#1a1612"/><rect x="0" y="122" width="480" height="2" fill="#3a342c"/>
-    <rect x="20" y="132" width="440" height="1" fill="#ffd48a" opacity=".28"/>
-    <rect x="40" y="138" width="80" height="2" fill="#c9bc98" opacity=".35"/><rect x="200" y="138" width="90" height="2" fill="#c9bc98" opacity=".35"/><rect x="360" y="138" width="70" height="2" fill="#c9bc98" opacity=".35"/>
-    <circle cx="28" cy="118" r="3.5" fill="#ffd48a" class="sb-lite"/><circle cx="452" cy="118" r="3.5" fill="#ffd48a" class="sb-lite"/>
-    <g class="sb-far" opacity=".85">
-      <rect x="392" y="86" width="22" height="36" rx="2" fill="#3a4048"/><rect x="418" y="74" width="18" height="48" rx="2" fill="#32383f"/>
-      <ellipse cx="403" cy="86" rx="12" ry="5" fill="#4a515a"/><ellipse cx="427" cy="74" rx="10" ry="4" fill="#4a515a"/>
-      <rect x="448" y="70" width="5" height="52" fill="#5a6570"/><circle cx="450.5" cy="66" r="6" fill="#cfd6dd" opacity=".35"/><circle cx="450.5" cy="66" r="2" fill="#ffd48a" class="sb-lite"/>
-      <path d="M368 112 L380 88 L392 112 Z" fill="#2e353c"/><circle cx="380" cy="84" r="7" fill="none" stroke="#8a949e" stroke-width="1.4"/>
-      <line x1="380" y1="77" x2="380" y2="91" stroke="#8a949e" stroke-width="1"/><line x1="373" y1="84" x2="387" y2="84" stroke="#8a949e" stroke-width="1"/>
-    </g>`;
+    <rect width="480" height="176" fill="url(#${id}-sky)"/>
+    <ellipse cx="236" cy="52" rx="210" ry="16" fill="url(#${id}-mw)" transform="rotate(-16 236 52)"/>
+    <ellipse cx="250" cy="58" rx="120" ry="9" fill="#c9a8e8" opacity=".05" transform="rotate(-16 250 58)"/>
+    ${sbStars(seed)}
+    <g class="sb-meteor"><line x1="0" y1="0" x2="34" y2="12" stroke="#f4f7ff" stroke-width="1.3"/><line x1="0" y1="0" x2="16" y2="6" stroke="#fff" stroke-width="2" opacity=".45"/></g>
+    <rect x="0" y="132" width="480" height="30" fill="url(#${id}-hz)"/>
+    <polygon points="18,18 78,162 8,162" fill="url(#${id}-flood)"/><polygon points="462,14 410,162 478,162" fill="url(#${id}-flood)"/>
+    <g class="sb-far" opacity=".9">
+      <rect x="388" y="104" width="26" height="50" rx="2" fill="#3a4048"/><ellipse cx="401" cy="104" rx="14" ry="6" fill="#4a515a"/>
+      <rect x="418" y="88" width="20" height="66" rx="2" fill="#32383f"/><ellipse cx="428" cy="88" rx="12" ry="5" fill="#4a515a"/>
+      <rect x="446" y="82" width="6" height="72" fill="#5a6570"/><circle cx="449" cy="78" r="8" fill="#cfd6dd" opacity=".32"/><circle cx="449" cy="78" r="2.4" fill="#ffd48a" class="sb-lite"/>
+      <path d="M356 150 L372 114 L388 150 Z" fill="#2e353c"/><circle cx="372" cy="110" r="8" fill="none" stroke="#8a949e" stroke-width="1.5"/>
+      <line x1="372" y1="102" x2="372" y2="118" stroke="#8a949e" stroke-width="1.1"/><line x1="364" y1="110" x2="380" y2="110" stroke="#8a949e" stroke-width="1.1"/>
+    </g>
+    <rect x="0" y="162" width="480" height="14" fill="#14110e"/><rect x="0" y="162" width="480" height="5" fill="#ffd48a" opacity=".1"/>
+    <rect x="0" y="161" width="480" height="2" fill="#4a4034"/>
+    <rect x="24" y="168" width="432" height="1" fill="#ffd48a" opacity=".32"/>
+    <rect x="48" y="172" width="70" height="2" fill="#c9bc98" opacity=".4"/><rect x="200" y="172" width="90" height="2" fill="#c9bc98" opacity=".4"/><rect x="360" y="172" width="70" height="2" fill="#c9bc98" opacity=".4"/>
+    <circle cx="22" cy="158" r="4" fill="#ffe08a" class="sb-lite"/><circle cx="458" cy="158" r="4" fill="#ffe08a" class="sb-lite"/>`;
   }
   function sbStarship(id) {
-    const mast = [18, 30, 42, 54, 66, 78, 90, 102];
+    const tx = 258, tw = 22;
     return `<g class="sb-tower">
-      <rect x="232" y="10" width="18" height="112" fill="#4c5560"/>
-      <rect x="228" y="8" width="26" height="8" fill="#6a7480"/>
-      ${mast.map(y => `<line x1="232" y1="${y}" x2="250" y2="${y + 10}" stroke="#2e353c" stroke-width="1.6"/><line x1="250" y1="${y}" x2="232" y2="${y + 10}" stroke="#2e353c" stroke-width="1.6"/>`).join('')}
+      <rect x="${tx}" y="14" width="${tw}" height="148" fill="#4c5560"/>
+      <rect x="${tx - 3}" y="12" width="${tw + 6}" height="8" fill="#6a7480"/>
+      ${sbX(tx, 20, tw, 132, 8, '#2a3138')}
+      <line x1="${tx + tw / 2}" y1="4" x2="${tx + tw / 2}" y2="14" stroke="#d8dee4" stroke-width="1.6"/>
+      <circle class="sb-lite sb-beacon" cx="${tx + tw / 2}" cy="3.5" r="2.4" fill="#e23b2e"/>
       <g class="sb-chop">
-        <rect x="204" y="16" width="8" height="92" rx="2" fill="#c5ccd3" stroke="#6a7178" stroke-width=".6"/>
-        <rect x="214" y="22" width="8" height="86" rx="2" fill="#b7bec6" stroke="#6a7178" stroke-width=".6"/>
-        <rect x="210" y="20" width="24" height="6" fill="#8b949e"/>
-        <rect x="210" y="70" width="24" height="6" fill="#8b949e"/>
+        <rect x="224" y="16" width="12" height="142" rx="2" fill="#c5ccd3" stroke="#6a7178" stroke-width=".6"/>
+        <path d="M226 26 H168 v14 H226" fill="none" stroke="#d5dce2" stroke-width="7" stroke-linejoin="round"/>
+        <path d="M226 92 H162 v16 H226" fill="none" stroke="#b7bec6" stroke-width="8" stroke-linejoin="round"/>
+        <rect x="222" y="24" width="18" height="6" fill="#8b949e"/>
+        <rect x="222" y="96" width="18" height="6" fill="#8b949e"/>
       </g>
-      <rect x="148" y="116" width="56" height="8" fill="#3a342c"/><rect x="152" y="114" width="48" height="4" fill="#5a5348"/>
+      <path d="M214 70 C214 70 200 78 186 78" fill="none" stroke="#c4a35a" stroke-width="2.2"/>
+      <path d="M214 110 C214 110 198 118 186 122" fill="none" stroke="#8a7a48" stroke-width="2"/>
+      <rect x="154" y="148" width="64" height="8" fill="#3a342c"/><rect x="158" y="146" width="56" height="4" fill="#5a5348"/>
+      <path d="M160 162 L168 148 M204 148 L212 162" stroke="#5a5348" stroke-width="3"/>
+      <path d="M170 162 L186 150 L202 162 Z" fill="#0a0806"/>
     </g>
-    <g class="sb-rocket">
-      <path d="M180 4 L194 16 L166 16 Z" fill="url(#${id}-steel)" stroke="#6a7178" stroke-width=".5"/>
-      <rect x="166" y="16" width="28" height="40" fill="url(#${id}-steel)" stroke="#6a7178" stroke-width=".5"/>
-      <path d="M166 22 L158 30 L166 30 Z" fill="#9aa1a8"/><path d="M194 22 L202 30 L194 30 Z" fill="#9aa1a8"/>
-      <path d="M166 46 L156 56 L166 56 Z" fill="#8a9198"/><path d="M194 46 L204 56 L194 56 Z" fill="#8a9198"/>
-      <g class="sb-booster">
-        <rect x="156" y="55" width="48" height="61" rx="3" fill="url(#${id}-steel)" stroke="#6a7178" stroke-width=".6"/>
-        <rect x="160" y="62" width="40" height="2" fill="#6a7178" opacity=".5"/>
-        <rect x="160" y="90" width="40" height="2" fill="#6a7178" opacity=".5"/>
+    <ellipse class="sb-padglow" cx="186" cy="160" rx="42" ry="11" fill="#ff8a30" filter="url(#${id}-soft)" opacity=".0"/>
+    <g class="sb-rocket" filter="url(#${id}-glow)">
+      <path d="M186 6 L202 22 L170 22 Z" fill="url(#${id}-steel)" stroke="#8a9198" stroke-width=".5"/>
+      <rect x="170" y="22" width="32" height="48" fill="url(#${id}-steel)" stroke="#6a7178" stroke-width=".45"/>
+      <line x1="173" y1="24" x2="173" y2="68" stroke="#fff" stroke-width="1.3" opacity=".32"/>
+      <path d="M170 28 L160 38 L170 38 Z" fill="#9aa1a8"/><path d="M202 28 L212 38 L202 38 Z" fill="#9aa1a8"/>
+      <path d="M170 52 L158 64 L170 64 Z" fill="#8a9198"/><path d="M202 52 L214 64 L202 64 Z" fill="#8a9198"/>
+      <rect class="sb-frost" x="168" y="68" width="36" height="3.5" fill="#e8f2ff" opacity=".78"/>
+      <g class="sb-booster superheavy">
+        <rect x="162" y="70" width="48" height="80" rx="3" fill="url(#${id}-steel)" stroke="#6a7178" stroke-width=".55"/>
+        <rect x="166" y="82" width="40" height="2" fill="#6a7178" opacity=".45"/>
+        <rect x="166" y="108" width="40" height="2" fill="#6a7178" opacity=".45"/>
+        <rect x="166" y="132" width="40" height="2" fill="#6a7178" opacity=".45"/>
+        <line x1="166" y1="74" x2="166" y2="146" stroke="#fff" stroke-width="1.4" opacity=".28"/>
       </g>
-      ${[166, 180, 194].map(x => `<ellipse cx="${x}" cy="118" rx="6" ry="3" fill="#2a2a2a"/>`).join('')}
-      <g class="sb-flame" transform="translate(180,120)"><ellipse cx="0" cy="10" rx="12" ry="16" fill="#ff7a2a"/><ellipse cx="0" cy="14" rx="6" ry="12" fill="#ffe08a"/></g>
+      ${[170, 186, 202].map(x => `<ellipse cx="${x}" cy="152" rx="7" ry="4" fill="#1a1a1a"/>`).join('')}
+      <g class="sb-flame" transform="translate(186,154)">
+        <ellipse cx="0" cy="14" rx="16" ry="22" fill="#ff4a12" opacity=".85"/>
+        <ellipse cx="0" cy="16" rx="10" ry="18" fill="#ff9a2a"/>
+        <ellipse cx="0" cy="20" rx="5" ry="14" fill="#ffe08a"/>
+        <ellipse cx="0" cy="8" rx="8" ry="6" fill="#fff6d0" opacity=".8"/>
+      </g>
     </g>`;
   }
   function sbFalcon(id) {
     const grid = (x, y) => `<g transform="translate(${x},${y})">
-      <rect width="8" height="8" fill="#1a1a1a"/><path d="M0 2 H8 M0 4 H8 M0 6 H8 M2 0 V8 M4 0 V8 M6 0 V8" stroke="#888" stroke-width=".5"/>
+      <rect width="11" height="11" fill="#141414"/><path d="M0 2.7 H11 M0 5.5 H11 M0 8.3 H11 M2.7 0 V11 M5.5 0 V11 M8.3 0 V11" stroke="#9a9a9a" stroke-width=".55"/>
     </g>`;
     return `<g class="sb-tower">
-      <rect x="132" y="8" width="12" height="114" fill="#5a6570"/><rect x="128" y="8" width="20" height="7" fill="#6a7682"/>
-      ${[20, 36, 52, 68, 84, 100].map(y => `<line x1="132" y1="${y}" x2="144" y2="${y + 10}" stroke="#2e353c" stroke-width="1.4"/>`).join('')}
-      <rect class="sb-arm" x="144" y="48" width="36" height="4" fill="#c4a35a"/><rect x="176" y="44" width="6" height="12" fill="#8a7a48"/>
-      <rect x="172" y="116" width="32" height="6" fill="#3a342c"/>
+      <rect x="128" y="12" width="16" height="150" fill="#5a6570"/>
+      <rect x="124" y="10" width="24" height="8" fill="#6a7682"/>
+      ${sbX(128, 20, 16, 132, 8, '#2a3138')}
+      <line x1="136" y1="3" x2="136" y2="12" stroke="#d8dee4" stroke-width="1.5"/>
+      <circle class="sb-lite sb-beacon" cx="136" cy="2.8" r="2.3" fill="#e23b2e"/>
+      <rect class="sb-arm" x="144" y="58" width="56" height="5" fill="#c4a35a"/>
+      <rect x="194" y="54" width="8" height="13" fill="#8a7a48"/>
+      <path d="M200 67 C200 90 210 110 210 128" fill="none" stroke="#8a6a30" stroke-width="2"/>
+      <path d="M148 100 H200" stroke="#6a7a88" stroke-width="2"/>
+      <rect x="196" y="150" width="28" height="6" fill="#3a342c"/>
+      <path d="M198 162 L204 150 M216 150 L222 162" stroke="#5a5348" stroke-width="3"/>
+      <path d="M204 162 L210 152 L216 162 Z" fill="#0a0806"/>
     </g>
-    <g class="sb-rocket">
-      <path d="M188 6 L196 22 L180 22 Z" fill="url(#${id}-white)" stroke="#c9c4b6" stroke-width=".5"/>
-      <rect x="180" y="22" width="16" height="28" fill="url(#${id}-white)"/>
-      <rect x="180" y="50" width="16" height="10" fill="#1a1a1a"/>
-      <rect x="180" y="60" width="16" height="56" fill="url(#${id}-white)" stroke="#c9c4b6" stroke-width=".5"/>
-      ${grid(172, 62)}${grid(196, 62)}${grid(172, 74)}${grid(196, 74)}
-      <path d="M180 114 L172 122" stroke="#bbb" stroke-width="2"/><path d="M196 114 L204 122" stroke="#bbb" stroke-width="2"/>
-      <ellipse cx="188" cy="118" rx="7" ry="3" fill="#2a2a2a"/>
-      <g class="sb-flame" transform="translate(188,120)"><ellipse cx="0" cy="10" rx="8" ry="16" fill="#ff7a2a"/><ellipse cx="0" cy="14" rx="4" ry="12" fill="#ffe08a"/></g>
+    <ellipse class="sb-padglow" cx="210" cy="160" rx="28" ry="10" fill="#ff8a30" filter="url(#${id}-soft)" opacity=".0"/>
+    <g class="sb-rocket" filter="url(#${id}-glow)">
+      <path d="M210 6 L220 24 L200 24 Z" fill="url(#${id}-white)" stroke="#c9c4b6" stroke-width=".45"/>
+      <rect x="200" y="24" width="20" height="38" fill="url(#${id}-white)"/>
+      <line x1="203" y1="26" x2="203" y2="60" stroke="#fff" stroke-width="1.2" opacity=".4"/>
+      <circle class="sb-lox-dot" cx="218" cy="28" r="2.2" fill="#d8e8f8" opacity=".8"/>
+      <rect x="200" y="62" width="20" height="12" fill="#141414"/>
+      <rect x="200" y="74" width="20" height="78" fill="url(#${id}-white)" stroke="#c9c4b6" stroke-width=".45"/>
+      ${grid(189, 76)}${grid(220, 76)}${grid(189, 90)}${grid(220, 90)}
+      <path d="M200 148 L188 160" stroke="#c9c4b6" stroke-width="2.4"/>
+      <path d="M220 148 L232 160" stroke="#c9c4b6" stroke-width="2.4"/>
+      <ellipse cx="210" cy="154" rx="8" ry="4" fill="#1a1a1a"/>
+      <g class="sb-flame" transform="translate(210,156)">
+        <ellipse cx="0" cy="14" rx="11" ry="20" fill="#ff4a12" opacity=".85"/>
+        <ellipse cx="0" cy="16" rx="7" ry="16" fill="#ff9a2a"/>
+        <ellipse cx="0" cy="20" rx="3.5" ry="12" fill="#ffe08a"/>
+      </g>
     </g>`;
   }
   function sbMcgregor(id) {
     return `<g class="sb-stand">
-      <rect x="36" y="52" width="18" height="70" fill="#5a5348"/>
-      <rect x="78" y="32" width="10" height="90" fill="#6a6e72"/><rect x="248" y="32" width="10" height="90" fill="#6a6e72"/>
-      <rect x="78" y="32" width="180" height="10" fill="#8a8e92"/>
-      <path d="M88 42 L248 88 M88 88 L248 42" stroke="#4a4e52" stroke-width="3"/>
-      <rect x="70" y="112" width="200" height="10" fill="#3a342c"/>
-      <path d="M258 96 L430 96 L430 122 L258 122 Z" fill="#2a241c"/>
-      <rect x="258" y="96" width="172" height="4" fill="#4a4034"/>
+      <rect x="32" y="70" width="20" height="92" fill="#5a5348"/>
+      <rect x="70" y="28" width="12" height="134" fill="#6a6e72"/><rect x="268" y="28" width="12" height="134" fill="#6a6e72"/>
+      <rect x="70" y="28" width="210" height="12" fill="#8a8e92"/>
+      ${sbX(82, 40, 186, 100, 5, '#4a4e52')}
+      <line x1="76" y1="4" x2="76" y2="28" stroke="#d8dee4" stroke-width="1.5"/>
+      <circle class="sb-lite sb-beacon" cx="76" cy="3" r="2.3" fill="#e23b2e"/>
+      <rect x="64" y="150" width="224" height="12" fill="#3a342c"/>
+      <path d="M280 118 L458 118 L458 162 L280 162 Z" fill="#2a241c"/>
+      <rect x="280" y="118" width="178" height="5" fill="#4a4034"/>
+      <circle cx="40" cy="166" r="7" fill="#222"/><circle cx="56" cy="166" r="7" fill="#222"/>
     </g>
-    <g class="sb-rocket sb-engine">
-      <rect x="108" y="66" width="96" height="24" rx="4" fill="url(#${id}-steel)" stroke="#6a7178" stroke-width=".7"/>
-      <rect x="118" y="70" width="16" height="16" fill="#3a3e42"/>
-      <circle cx="126" cy="78" r="5" fill="#1a1a1a"/>
-      <path class="sb-bell" d="M204 62 L252 52 L252 104 L204 94 Z" fill="#2e3236" stroke="#1a1a1a" stroke-width=".6"/>
-      <circle cx="120" cy="118" r="6" fill="#222"/><circle cx="168" cy="118" r="6" fill="#222"/>
-      <g class="sb-flame" transform="translate(252,78)"><ellipse cx="28" cy="0" rx="28" ry="14" fill="#ff7a2a"/><ellipse cx="36" cy="0" rx="22" ry="8" fill="#ffe08a"/></g>
+    <ellipse class="sb-padglow" cx="300" cy="140" rx="50" ry="14" fill="#ff8a30" filter="url(#${id}-soft)" opacity=".0"/>
+    <g class="sb-rocket sb-engine" filter="url(#${id}-glow)">
+      <rect x="96" y="78" width="120" height="32" rx="5" fill="url(#${id}-steel)" stroke="#6a7178" stroke-width=".7"/>
+      <rect x="108" y="84" width="22" height="20" fill="#3a3e42"/>
+      <circle cx="119" cy="94" r="7" fill="#1a1a1a"/>
+      <line x1="100" y1="82" x2="210" y2="82" stroke="#fff" stroke-width="1.2" opacity=".3"/>
+      <path class="sb-bell" d="M216 72 L278 56 L278 132 L216 116 Z" fill="#2e3236" stroke="#1a1a1a" stroke-width=".7"/>
+      <ellipse cx="278" cy="94" rx="6" ry="28" fill="#1a1a1a"/>
+      <circle cx="112" cy="150" r="8" fill="#222"/><circle cx="168" cy="150" r="8" fill="#222"/>
+      <g class="sb-flame" transform="translate(278,94)">
+        <ellipse cx="48" cy="0" rx="48" ry="18" fill="#ff4a12" opacity=".85"/>
+        <ellipse cx="62" cy="0" rx="38" ry="11" fill="#ff9a2a"/>
+        <ellipse cx="78" cy="0" rx="28" ry="6" fill="#ffe08a"/>
+        <ellipse cx="20" cy="0" rx="14" ry="10" fill="#fff6d0" opacity=".7"/>
+      </g>
     </g>`;
   }
   const SB_VEH = { starship: sbStarship, falcon9: sbFalcon, mcgregor: sbMcgregor };
@@ -339,16 +406,20 @@
     const liveRows = [];
     if (main && !lifting) liveRows.push(sbTaskRow(main, true));
     live.filter(t => !main || t.id !== main.id).forEach(t => liveRows.push(sbTaskRow(t, false)));
-    const extraN = Math.max(0, liveRows.length - 2);
-    const shownLive = liveRows.slice(0, 2);
+    const extraN = Math.max(0, liveRows.length - 1);
+    const shownLive = liveRows.slice(0, 1);
     tasks.forEach(t => sbPrev.set(t.id, t.status));
     return `<article class="sb-pad" data-agent="${esc(agent.name)}">
       <header class="sb-pad-head"><span class="nm">${esc(agent.name)}</span><span class="role">${esc(agent.role || '')}</span>
         <span class="chip st-${chipKind}">${esc(chipTxt)}</span><span class="count">${live.length}</span></header>
       <div class="sb-scene ${esc(agent.vehicle)} ${state}">
-        <svg viewBox="0 0 480 150" preserveAspectRatio="xMidYMax slice" aria-hidden="true">${sbSky(id, seed)}${veh}</svg>
-        <div class="sb-steam"><i></i><i></i><i></i></div><div class="sb-plume"></div>
-        <div class="sb-fuel" data-sb-fuel="${fuelStart}" style="--p:18%"><i class="sb-fuel-bar"><b></b></i><span>加注中</span></div>
+        <svg viewBox="0 0 480 176" preserveAspectRatio="xMidYMax meet" aria-hidden="true">${sbSky(id, seed)}${veh}</svg>
+        <div class="sb-flash"></div>
+        <div class="sb-steam"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="sb-steam-hi"><i></i><i></i></div>
+        <div class="sb-lox"><i></i><i></i></div>
+        <div class="sb-plume"></div>
+        <div class="sb-fuel" data-sb-fuel="${fuelStart}" style="--p:18%"><span>加注中</span><i class="sb-fuel-bar"><b></b></i></div>
         <div class="sb-hold-bar"></div><div class="sb-hold-tag">HOLD · 卡住</div>
         <div class="sb-empty">發射台待命</div>
       </div>

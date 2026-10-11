@@ -95,7 +95,7 @@ async function api() {
     if (!sj.starbase || !sj.starbase.agents) fail('/api/strips missing starbase'); else ok('/api/strips has starbase');
     const html = await get('http://127.0.0.1:4790/', '127.0.0.1:4790');
     if (!/id="starbase"/.test(html.body)) fail('HTML missing StarBase block'); else ok('HTML has StarBase block');
-    if (!/v0\.2\.0/.test(html.body)) fail('HTML missing v0.2.0'); else ok('HTML has v0.2.0');
+    if (!/v0\.2\.1/.test(html.body)) fail('HTML missing v0.2.1'); else ok('HTML has v0.2.1');
     const bad = await get('http://127.0.0.1:4790/api/starbase', 'example.com');
     if (bad.status !== 421) fail('host guard ' + bad.status); else ok('host guard 421');
   } catch (e) { fail('demo api ' + e.message); }
