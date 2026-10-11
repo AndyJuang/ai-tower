@@ -14,6 +14,11 @@
   let data = null, loadedAt = Date.now(), busy = false, pendingRender = false, undoState = null, undoTimer = null;
   const open = new Set();
   const filt = Object.assign({ q: '', ms: '', repo: '' }, JSON.parse(localStorage.getItem('tower.filter') || '{}'));
+  const SB_KEY = 'tower.starbaseOpen';
+  const sbPlayed = new Set();
+  const sbPrev = new Map();
+  const sbLift = new Map();
+  const sbLiftTimer = new Map();
 
   const now = () => FROZEN && data ? data.generatedAt + (Date.now() - loadedAt) : Date.now();
   const tpe = t => new Date(t + ((data && data.tzOffsetMin != null ? data.tzOffsetMin : -new Date().getTimezoneOffset()) * 60e3));
@@ -27,7 +32,8 @@
   function toast(msg, kind) { const t = $('#toast'); t.textContent = msg; t.className = 'toast ' + (kind || ''); t.hidden = false; clearTimeout(t._h); t._h = setTimeout(() => { t.hidden = true; }, kind === 'err' ? 12000 : 6000); }
   const FRIENDLY = {
     'bad token': '塔台連線憑證已更新，自動重試也沒成功 — 請重新整理頁面（⌘R）再按一次',
-    'manual issue': '這張是實機驗證 issue — 背景 agent 沒有 GUI，不能排班或起飛，請手動測試',
+    'manual issue': '需要實機的 issue 不能排進背景 agent',
+    '需要實機的 issue 不能排進背景 agent': '需要實機的 issue 不能排進背景 agent',
     'bad origin': '請從 http://127.0.0.1 塔台網址開啟這個頁面再操作',
     'bad host': '請用 http://127.0.0.1 開啟塔台（不支援其他主機名稱）',
     'bad content-type': '瀏覽器送出的格式不對，請重新整理頁面',
@@ -54,6 +60,11 @@
     $('#clock-date').textContent = ((data && data.tzLabel) ? data.tzLabel + ' ' : '') + d.slice(0, 10);
     document.querySelectorAll('[data-since]').forEach(el => { el.innerHTML = flap(dur(now() - Number(el.dataset.since))); });
     document.querySelectorAll('[data-cd]').forEach(el => { el.innerHTML = flap(cd(Number(el.dataset.cd))); const l = el.previousElementSibling; if (l && Number(el.dataset.cd) <= now() && !l.dataset.done) { l.dataset.done = 1; l.textContent = '即將起飛'; } });
+    document.querySelectorAll('[data-sb-elapsed]').forEach(el => { el.textContent = sbAgo(Number(el.dataset.sbElapsed)); });
+    document.querySelectorAll('[data-sb-fuel]').forEach(el => {
+      const started = Number(el.dataset.sbFuel) || now();
+      el.style.setProperty('--p', Math.round((((now() - started) / 12e5) % 1) * 100) + '%');
+    });
   }
   setInterval(tick, 1000);
 
@@ -151,9 +162,217 @@
       <button type="button" class="handle" aria-label="移動 #${esc(i.number)}：空白鍵拿起、上下鍵排序、左右鍵換跑道、空白鍵放下" aria-pressed="false" title="拖曳">≡</button></li>`;
   }
 
+  // ---------- StarBase ----------
+  function sbOpen() { try { const v = localStorage.getItem(SB_KEY); return v === null ? true : v === '1'; } catch { return true; } }
+  function setSbOpen(on) {
+    try { localStorage.setItem(SB_KEY, on ? '1' : '0'); } catch {}
+    const el = $('#starbase'); if (!el) return;
+    el.classList.toggle('collapsed', !on);
+    document.body.classList.toggle('sb-on', on);
+    const btn = $('#sb-toggle'); if (btn) { btn.setAttribute('aria-expanded', on); btn.textContent = on ? '▾' : '▸'; btn.title = on ? '收合 StarBase' : '展開 StarBase'; }
+  }
+  function reducedMotion() { return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches; }
+  function sbAgo(t) {
+    if (!t) return '—';
+    const s = Math.max(0, Math.floor((now() - t) / 1000));
+    if (s < 60) return s + 's';
+    if (s < 3600) return Math.floor(s / 60) + 'm';
+    return Math.floor(s / 3600) + 'h' + pad(Math.floor(s / 60) % 60);
+  }
+  function sbMain(tasks) {
+    const live = tasks || [];
+    const pick = st => live.filter(t => t.status === st).sort((a, b) => (b.updated_at || b.started_at || 0) - (a.updated_at || a.started_at || 0))[0];
+    return pick('in_progress') || pick('queued') || pick('blocked') || null;
+  }
+  function sbLiftTask(agentName, tasks) {
+    const list = tasks || [];
+    if (reducedMotion()) { list.filter(t => t.status === 'done').forEach(t => sbPlayed.add(t.id)); return null; }
+    const cur = sbLift.get(agentName);
+    if (cur && now() < cur.until) return list.find(t => t.id === cur.id) || null;
+    const cand = list.filter(t => t.status === 'done' && !sbPlayed.has(t.id));
+    for (const t of cand) {
+      const doneAt = t.done_at || t.updated_at;
+      const recent = doneAt && (now() - doneAt) <= 90e3;
+      const trans = sbPrev.get(t.id) && sbPrev.get(t.id) !== 'done';
+      if (recent || trans) {
+        sbLift.set(agentName, { id: t.id, until: now() + 2600 });
+        clearTimeout(sbLiftTimer.get(agentName));
+        sbLiftTimer.set(agentName, setTimeout(() => { sbPlayed.add(t.id); sbLift.delete(agentName); if (!busy) render(); }, 2700));
+        return t;
+      }
+      sbPlayed.add(t.id);
+    }
+    return null;
+  }
+  const SB_CHIP = { queued: 'T- 待命', in_progress: '加注中', blocked: 'HOLD · 卡住', done: '已升空', empty: '待命' };
+  function sbStars(seed) {
+    let s = seed >>> 0, out = '';
+    for (let i = 0; i < 42; i++) {
+      s = (Math.imul(s, 1664525) + 1013904223) >>> 0; const x = s % 480;
+      s = (Math.imul(s, 1664525) + 1013904223) >>> 0; const y = s % 118;
+      s = (Math.imul(s, 1664525) + 1013904223) >>> 0; const r = 0.3 + (s % 8) / 16;
+      out += `<circle class="sb-star t${(i % 3) + 1}" cx="${x}" cy="${y}" r="${r.toFixed(2)}" fill="#e8eef8"/>`;
+    }
+    return out;
+  }
+  function sbSky(id, seed) {
+    return `<defs>
+      <linearGradient id="${id}-sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#05070e"/><stop offset=".55" stop-color="#101a2c"/><stop offset=".82" stop-color="#1a2436"/><stop offset="1" stop-color="#2a2218"/></linearGradient>
+      <linearGradient id="${id}-steel" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#8d949b"/><stop offset=".45" stop-color="#e4e7ea"/><stop offset="1" stop-color="#6e757c"/></linearGradient>
+      <linearGradient id="${id}-white" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#d8d4c8"/><stop offset=".5" stop-color="#f7f4ea"/><stop offset="1" stop-color="#c4c0b4"/></linearGradient>
+      <radialGradient id="${id}-flood" cx=".5" cy="0" r="1"><stop offset="0" stop-color="#ffd48a" stop-opacity=".22"/><stop offset="1" stop-color="#ffd48a" stop-opacity="0"/></radialGradient>
+    </defs>
+    <rect width="480" height="150" fill="url(#${id}-sky)"/>${sbStars(seed)}
+    <polygon points="0,20 70,122 20,122" fill="url(#${id}-flood)"/><polygon points="480,16 430,122 470,122" fill="url(#${id}-flood)"/>
+    <rect x="0" y="122" width="480" height="28" fill="#1a1612"/><rect x="0" y="122" width="480" height="2" fill="#3a342c"/>
+    <rect x="20" y="132" width="440" height="1" fill="#ffd48a" opacity=".28"/>
+    <rect x="40" y="138" width="80" height="2" fill="#c9bc98" opacity=".35"/><rect x="200" y="138" width="90" height="2" fill="#c9bc98" opacity=".35"/><rect x="360" y="138" width="70" height="2" fill="#c9bc98" opacity=".35"/>
+    <circle cx="28" cy="118" r="3.5" fill="#ffd48a" class="sb-lite"/><circle cx="452" cy="118" r="3.5" fill="#ffd48a" class="sb-lite"/>
+    <g class="sb-far" opacity=".85">
+      <rect x="392" y="86" width="22" height="36" rx="2" fill="#3a4048"/><rect x="418" y="74" width="18" height="48" rx="2" fill="#32383f"/>
+      <ellipse cx="403" cy="86" rx="12" ry="5" fill="#4a515a"/><ellipse cx="427" cy="74" rx="10" ry="4" fill="#4a515a"/>
+      <rect x="448" y="70" width="5" height="52" fill="#5a6570"/><circle cx="450.5" cy="66" r="6" fill="#cfd6dd" opacity=".35"/><circle cx="450.5" cy="66" r="2" fill="#ffd48a" class="sb-lite"/>
+      <path d="M368 112 L380 88 L392 112 Z" fill="#2e353c"/><circle cx="380" cy="84" r="7" fill="none" stroke="#8a949e" stroke-width="1.4"/>
+      <line x1="380" y1="77" x2="380" y2="91" stroke="#8a949e" stroke-width="1"/><line x1="373" y1="84" x2="387" y2="84" stroke="#8a949e" stroke-width="1"/>
+    </g>`;
+  }
+  function sbStarship(id) {
+    const mast = [18, 30, 42, 54, 66, 78, 90, 102];
+    return `<g class="sb-tower">
+      <rect x="232" y="10" width="18" height="112" fill="#4c5560"/>
+      <rect x="228" y="8" width="26" height="8" fill="#6a7480"/>
+      ${mast.map(y => `<line x1="232" y1="${y}" x2="250" y2="${y + 10}" stroke="#2e353c" stroke-width="1.6"/><line x1="250" y1="${y}" x2="232" y2="${y + 10}" stroke="#2e353c" stroke-width="1.6"/>`).join('')}
+      <g class="sb-chop">
+        <rect x="204" y="16" width="8" height="92" rx="2" fill="#c5ccd3" stroke="#6a7178" stroke-width=".6"/>
+        <rect x="214" y="22" width="8" height="86" rx="2" fill="#b7bec6" stroke="#6a7178" stroke-width=".6"/>
+        <rect x="210" y="20" width="24" height="6" fill="#8b949e"/>
+        <rect x="210" y="70" width="24" height="6" fill="#8b949e"/>
+      </g>
+      <rect x="148" y="116" width="56" height="8" fill="#3a342c"/><rect x="152" y="114" width="48" height="4" fill="#5a5348"/>
+    </g>
+    <g class="sb-rocket">
+      <path d="M180 4 L194 16 L166 16 Z" fill="url(#${id}-steel)" stroke="#6a7178" stroke-width=".5"/>
+      <rect x="166" y="16" width="28" height="40" fill="url(#${id}-steel)" stroke="#6a7178" stroke-width=".5"/>
+      <path d="M166 22 L158 30 L166 30 Z" fill="#9aa1a8"/><path d="M194 22 L202 30 L194 30 Z" fill="#9aa1a8"/>
+      <path d="M166 46 L156 56 L166 56 Z" fill="#8a9198"/><path d="M194 46 L204 56 L194 56 Z" fill="#8a9198"/>
+      <g class="sb-booster">
+        <rect x="156" y="55" width="48" height="61" rx="3" fill="url(#${id}-steel)" stroke="#6a7178" stroke-width=".6"/>
+        <rect x="160" y="62" width="40" height="2" fill="#6a7178" opacity=".5"/>
+        <rect x="160" y="90" width="40" height="2" fill="#6a7178" opacity=".5"/>
+      </g>
+      ${[166, 180, 194].map(x => `<ellipse cx="${x}" cy="118" rx="6" ry="3" fill="#2a2a2a"/>`).join('')}
+      <g class="sb-flame" transform="translate(180,120)"><ellipse cx="0" cy="10" rx="12" ry="16" fill="#ff7a2a"/><ellipse cx="0" cy="14" rx="6" ry="12" fill="#ffe08a"/></g>
+    </g>`;
+  }
+  function sbFalcon(id) {
+    const grid = (x, y) => `<g transform="translate(${x},${y})">
+      <rect width="8" height="8" fill="#1a1a1a"/><path d="M0 2 H8 M0 4 H8 M0 6 H8 M2 0 V8 M4 0 V8 M6 0 V8" stroke="#888" stroke-width=".5"/>
+    </g>`;
+    return `<g class="sb-tower">
+      <rect x="132" y="8" width="12" height="114" fill="#5a6570"/><rect x="128" y="8" width="20" height="7" fill="#6a7682"/>
+      ${[20, 36, 52, 68, 84, 100].map(y => `<line x1="132" y1="${y}" x2="144" y2="${y + 10}" stroke="#2e353c" stroke-width="1.4"/>`).join('')}
+      <rect class="sb-arm" x="144" y="48" width="36" height="4" fill="#c4a35a"/><rect x="176" y="44" width="6" height="12" fill="#8a7a48"/>
+      <rect x="172" y="116" width="32" height="6" fill="#3a342c"/>
+    </g>
+    <g class="sb-rocket">
+      <path d="M188 6 L196 22 L180 22 Z" fill="url(#${id}-white)" stroke="#c9c4b6" stroke-width=".5"/>
+      <rect x="180" y="22" width="16" height="28" fill="url(#${id}-white)"/>
+      <rect x="180" y="50" width="16" height="10" fill="#1a1a1a"/>
+      <rect x="180" y="60" width="16" height="56" fill="url(#${id}-white)" stroke="#c9c4b6" stroke-width=".5"/>
+      ${grid(172, 62)}${grid(196, 62)}${grid(172, 74)}${grid(196, 74)}
+      <path d="M180 114 L172 122" stroke="#bbb" stroke-width="2"/><path d="M196 114 L204 122" stroke="#bbb" stroke-width="2"/>
+      <ellipse cx="188" cy="118" rx="7" ry="3" fill="#2a2a2a"/>
+      <g class="sb-flame" transform="translate(188,120)"><ellipse cx="0" cy="10" rx="8" ry="16" fill="#ff7a2a"/><ellipse cx="0" cy="14" rx="4" ry="12" fill="#ffe08a"/></g>
+    </g>`;
+  }
+  function sbMcgregor(id) {
+    return `<g class="sb-stand">
+      <rect x="36" y="52" width="18" height="70" fill="#5a5348"/>
+      <rect x="78" y="32" width="10" height="90" fill="#6a6e72"/><rect x="248" y="32" width="10" height="90" fill="#6a6e72"/>
+      <rect x="78" y="32" width="180" height="10" fill="#8a8e92"/>
+      <path d="M88 42 L248 88 M88 88 L248 42" stroke="#4a4e52" stroke-width="3"/>
+      <rect x="70" y="112" width="200" height="10" fill="#3a342c"/>
+      <path d="M258 96 L430 96 L430 122 L258 122 Z" fill="#2a241c"/>
+      <rect x="258" y="96" width="172" height="4" fill="#4a4034"/>
+    </g>
+    <g class="sb-rocket sb-engine">
+      <rect x="108" y="66" width="96" height="24" rx="4" fill="url(#${id}-steel)" stroke="#6a7178" stroke-width=".7"/>
+      <rect x="118" y="70" width="16" height="16" fill="#3a3e42"/>
+      <circle cx="126" cy="78" r="5" fill="#1a1a1a"/>
+      <path class="sb-bell" d="M204 62 L252 52 L252 104 L204 94 Z" fill="#2e3236" stroke="#1a1a1a" stroke-width=".6"/>
+      <circle cx="120" cy="118" r="6" fill="#222"/><circle cx="168" cy="118" r="6" fill="#222"/>
+      <g class="sb-flame" transform="translate(252,78)"><ellipse cx="28" cy="0" rx="28" ry="14" fill="#ff7a2a"/><ellipse cx="36" cy="0" rx="22" ry="8" fill="#ffe08a"/></g>
+    </g>`;
+  }
+  const SB_VEH = { starship: sbStarship, falcon9: sbFalcon, mcgregor: sbMcgregor };
+  function sbMini() {
+    return `<svg class="sb-mini" viewBox="0 0 10 16" aria-hidden="true"><path d="M5 1 L8 5 L8 13 L2 13 L2 5 Z" fill="#6b675a"/><rect x="3" y="13" width="4" height="2" fill="#8a5a00"/></svg>`;
+  }
+  function sbTaskRow(t, isMain) {
+    const stClass = t.status === 'in_progress' ? 'TAKEOFF' : t.status === 'blocked' ? 'DIVERTED' : t.status === 'done' ? 'LANDED' : 'SCHEDULED';
+    const mini = !isMain && t.status !== 'done' ? sbMini() : '';
+    const chip = `<span class="sb-left">${mini}<span class="chip st-${stClass}">${esc(t.statusZh || SB_CHIP[t.status] || t.status)}</span></span>`;
+    const tip = esc(t.task) + (t.note ? ' — ' + esc(t.note) : '');
+    const title = t.link
+      ? `<a class="ttl" href="${esc(t.link)}" target="_blank" rel="noopener" title="${tip}">${esc(t.task)}</a>`
+      : `<span class="ttl" title="${tip}">${esc(t.task)}</span>`;
+    const whenT = t.status === 'done' ? (t.done_at || t.updated_at) : (t.started_at || t.updated_at);
+    return `<li class="sb-task ${t.status}${isMain ? ' main' : ''}" title="${tip}">${chip}${title}<span class="when" data-sb-elapsed="${whenT || ''}">${sbAgo(whenT)}</span></li>`;
+  }
+  function sbPad(agent) {
+    const tasks = agent.tasks || [];
+    const lifting = sbLiftTask(agent.name, tasks);
+    const main = lifting || sbMain(tasks);
+    const state = lifting ? 'liftoff' : !main ? 'empty' : main.status === 'in_progress' ? 'fueling' : main.status === 'blocked' ? 'hold' : main.status === 'queued' ? 'queued' : 'empty';
+    const chipKind = lifting ? 'TAKEOFF' : !main ? 'SCHEDULED' : main.status === 'in_progress' ? 'TAKEOFF' : main.status === 'blocked' ? 'DIVERTED' : 'SCHEDULED';
+    const chipTxt = lifting ? '升空' : SB_CHIP[main ? main.status : 'empty'];
+    const live = tasks.filter(t => t.status !== 'done');
+    const flown = tasks.filter(t => t.status === 'done' && !(lifting && t.id === lifting.id));
+    const hideH = (data.starbase && data.starbase.hideHours) || 6;
+    const flownShow = flown.filter(t => {
+      const t0 = t.done_at || t.updated_at; return !t0 || (now() - t0) <= hideH * 3600e3;
+    });
+    const id = 'sb-' + agent.vehicle;
+    const veh = (SB_VEH[agent.vehicle] || sbStarship)(id);
+    const seed = agent.vehicle === 'starship' ? 7 : agent.vehicle === 'falcon9' ? 19 : 31;
+    const fuelStart = main && main.status === 'in_progress' ? (main.started_at || now()) : '';
+    const liveRows = [];
+    if (main && !lifting) liveRows.push(sbTaskRow(main, true));
+    live.filter(t => !main || t.id !== main.id).forEach(t => liveRows.push(sbTaskRow(t, false)));
+    const extraN = Math.max(0, liveRows.length - 2);
+    const shownLive = liveRows.slice(0, 2);
+    tasks.forEach(t => sbPrev.set(t.id, t.status));
+    return `<article class="sb-pad" data-agent="${esc(agent.name)}">
+      <header class="sb-pad-head"><span class="nm">${esc(agent.name)}</span><span class="role">${esc(agent.role || '')}</span>
+        <span class="chip st-${chipKind}">${esc(chipTxt)}</span><span class="count">${live.length}</span></header>
+      <div class="sb-scene ${esc(agent.vehicle)} ${state}">
+        <svg viewBox="0 0 480 150" preserveAspectRatio="xMidYMax slice" aria-hidden="true">${sbSky(id, seed)}${veh}</svg>
+        <div class="sb-steam"><i></i><i></i><i></i></div><div class="sb-plume"></div>
+        <div class="sb-fuel" data-sb-fuel="${fuelStart}" style="--p:18%"><i class="sb-fuel-bar"><b></b></i><span>加注中</span></div>
+        <div class="sb-hold-bar"></div><div class="sb-hold-tag">HOLD · 卡住</div>
+        <div class="sb-empty">發射台待命</div>
+      </div>
+      ${agent.error ? `<p class="sb-err">讀檔容錯：${esc(agent.error)}</p>` : ''}
+      <div class="sb-lists">
+        <ol class="sb-list">${shownLive.join('')}</ol>
+        ${extraN ? `<div class="sb-more">＋${extraN}</div>` : ''}
+        ${flownShow.length ? `<div class="sb-flown-lab">已升空</div><ol class="sb-flown">${flownShow.map(t => sbTaskRow(t, false)).join('')}</ol>` : ''}
+      </div>
+    </article>`;
+  }
+  function renderStarbase() {
+    const sb = data && data.starbase;
+    const host = $('#sb-pads'); if (!host) return;
+    if (!sb || !sb.agents) { host.innerHTML = ''; $('#sb-count').textContent = '0'; return; }
+    const n = sb.agents.reduce((s, a) => s + ((a.tasks || []).filter(t => t.status !== 'done').length), 0);
+    $('#sb-count').textContent = n;
+    host.innerHTML = sb.agents.map(sbPad).join('');
+  }
+
   // ---------- render ----------
   function render() {
     pendingRender = false; if (!data) return;
+    renderStarbase();
     const focusRef = document.activeElement && document.activeElement.closest && document.activeElement.closest('.qitem') ? document.activeElement.closest('.qitem').dataset.ref : null;
     const strips = data.strips || [];
     // PARK
@@ -221,6 +440,7 @@
   // ---------- filters / toggles / expand ----------
   function saveFilt() { localStorage.setItem('tower.filter', JSON.stringify(filt)); render(); }
   { const m = $('#manual-sec'); try { m.open = localStorage.getItem('tower.manualOpen') === '1'; } catch {} m.addEventListener('toggle', () => { try { localStorage.setItem('tower.manualOpen', m.open ? '1' : '0'); } catch {} }); }
+  { const btn = $('#sb-toggle'); if (btn) btn.addEventListener('click', () => setSbOpen(!sbOpen())); setSbOpen(sbOpen()); }
   $('#f-q').value = filt.q;
   $('#f-q').addEventListener('input', e => { filt.q = e.target.value; saveFilt(); });
   $('#f-ms').addEventListener('change', e => { filt.ms = e.target.value; saveFilt(); });
@@ -277,6 +497,19 @@
     document.body.appendChild(pop); draw(); pop.querySelector('#m-model').focus();
   }
 
+  function uniqMsgs(arr) {
+    const out = []; const seen = new Set();
+    for (const x of arr || []) { const s = String(x); if (seen.has(s)) continue; seen.add(s); out.push(s); }
+    return out;
+  }
+  function jumpToStrip(id) {
+    closePop();
+    const el = document.querySelector(`.strip[data-id="${CSS.escape(id)}"]`);
+    if (!el) { toast('找不到卡片 ' + id, 'err'); return; }
+    el.classList.add('jump');
+    el.scrollIntoView({ block: 'center' });
+    setTimeout(() => el.classList.remove('jump'), 2500);
+  }
   // ---------- takeoff confirm popover ----------
   async function openConfirm(btn) {
     const li = btn.closest('.qitem'); const ref = li.dataset.ref; const lane = li.closest('[data-drop]').dataset.drop;
@@ -285,18 +518,34 @@
     document.body.appendChild(pop); place(pop, btn);
     try {
       const p = await post('/api/preview', { ref, lane });
+      const warns = uniqMsgs(p.warn || []);
+      const flying = p.flying && p.line;
       pop.innerHTML = `<div class="pop-title">${fin(KEY[lane], 22)} 確認起飛 ${esc(lane)} ${esc(p.issue ? p.issue.number : '')}</div>
         <dl><dt>Agent</dt><dd>${esc(p.airline)} · ${esc(p.agent)}</dd><dt>Issue</dt><dd>#${esc(p.issue.number)} ${esc(p.issue.title)}</dd>
         <dt>Branch</dt><dd><code>${esc(p.branch)}</code></dd><dt>Line</dt><dd><code>${esc(p.line)}</code></dd><dt>Base</dt><dd><code>${esc(p.base)}</code></dd>${p.product ? `<dt>Product</dt><dd>${prod(p.product)} ${esc(p.product.name)} <small>${esc(p.repo)}</small></dd>` : ''}</dl>
-        ${(p.warn || []).map(w => `<p class="warn">⚠ ${esc(w)}</p>`).join('')}
-        <div class="pop-actions"><button type="button" class="cancel">取消</button><button type="button" class="go">✈ 確認起飛</button></div>`;
+        ${warns.map(w => `<p class="warn">⚠ ${esc(w)}</p>`).join('')}
+        <div class="pop-actions">${flying ? `<button type="button" class="jump-btn" title="這條已經在飛">跳到該卡片</button>` : ''}<button type="button" class="cancel">取消</button><button type="button" class="go"${flying ? ' disabled' : ''}>✈ 確認起飛</button></div>`;
       place(pop, btn);
       pop.querySelector('.cancel').onclick = closePop;
-      const go = pop.querySelector('.go'); go.focus();
-      go.onclick = async () => {
+      const jb = pop.querySelector('.jump-btn'); if (jb) jb.onclick = () => jumpToStrip(p.line);
+      const go = pop.querySelector('.go'); if (go && !flying) go.focus();
+      if (go) go.onclick = async () => {
         go.disabled = true; go.textContent = '起飛中…（建立 worktree、寫 prompt、啟動 runner）';
-        try { const r = await post('/api/takeoff', { ref, lane }); closePop(); toast(`✈ ${lane} ${ref.split('#')[1]} 已起飛 → ${r.line}（${r.branch}）。看到 agent 程序後會移到 TAKEOFF。`); load(); }
-        catch (er) { go.disabled = false; go.textContent = '✈ 重試'; pop.querySelector('.pop-actions').insertAdjacentHTML('beforebegin', `<p class="warn err">✖ ${esc(er.message)}${er.data && er.data.steps && er.data.steps.length ? '<br>已完成：' + esc(er.data.steps.join('；')) : ''}</p>`); }
+        try {
+          const r = await post('/api/takeoff', { ref, lane }); closePop();
+          toast(r.reuse ? `✈ 重用 ${r.line} 起飛（既有 worktree／branch）` : `✈ ${lane} ${ref.split('#')[1]} 已起飛 → ${r.line}（${r.branch}）。看到 agent 程序後會移到 TAKEOFF。`);
+          load();
+        } catch (er) {
+          go.disabled = false; go.textContent = '✈ 重試';
+          pop.querySelectorAll('.warn.err').forEach(n => n.remove());
+          const fly = er.data && er.data.flying && er.data.line;
+          const msg = uniqMsgs([er.message])[0];
+          pop.querySelector('.pop-actions').insertAdjacentHTML('beforebegin', `<p class="warn err">✖ ${esc(msg)}${er.data && er.data.steps && er.data.steps.length ? '<br>已完成：' + esc(er.data.steps.join('；')) : ''}</p>`);
+          if (fly && !pop.querySelector('.jump-btn')) {
+            pop.querySelector('.pop-actions').insertAdjacentHTML('afterbegin', `<button type="button" class="jump-btn" title="這條已經在飛">跳到該卡片</button>`);
+            pop.querySelector('.jump-btn').onclick = () => jumpToStrip(er.data.line);
+          }
+        }
       };
     } catch (er) { pop.innerHTML = `<p class="warn err">✖ ${esc(er.message)}</p><div class="pop-actions"><button type="button" class="cancel">關閉</button></div>`; pop.querySelector('.cancel').onclick = closePop; }
   }

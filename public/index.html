@@ -10,7 +10,7 @@
 <body>
 <header class="top">
   <div class="title-row">
-    <h1><span class="tw">▲</span> AI TOWER</h1>
+    <h1><span class="tw">▲</span> AI TOWER <small class="ver">v0.2.0</small></h1>
     <div class="mode" id="mode" role="group" aria-label="Dispatch mode">
       <button type="button" data-mode="MANUAL">MANUAL</button><button type="button" data-mode="AUTO">AUTO PILOT</button>
     </div>
@@ -19,6 +19,15 @@
   </div>
   <div class="airlines" id="airlines" aria-label="Airlines"></div>
 </header>
+<section class="starbase" id="starbase">
+  <header class="sb-bar">
+    <h2>StarBase <span class="zh">發射場</span></h2>
+    <span class="sb-sub">三位 DEV Grok Bot</span>
+    <span class="count" id="sb-count"></span>
+    <button type="button" class="sb-toggle" id="sb-toggle" aria-expanded="true" aria-controls="sb-pads" title="收合 StarBase">▾</button>
+  </header>
+  <div class="sb-pads" id="sb-pads"></div>
+</section>
 <main class="bays" id="bays">
   <section class="bay" data-bay="park">
     <header><h2>PARK <span class="zh">待辦</span></h2><span class="count" id="park-count"></span></header>

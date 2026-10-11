@@ -18,6 +18,8 @@ const DISPATCH = require('./lib/dispatch');
 const MODELS = require('./lib/models');
 const PRODUCTS = require('./lib/products');
 const REPOS = require('./lib/repos');
+const STARBASE = require('./lib/starbase');
+const PROCESSES = require('./lib/processes');
 const PORT = CFG.port;
 const BASE = CFG.baseDir;
 const L = CFG.logsDir;
@@ -152,7 +154,6 @@ function parseEvent(type, raw) {
 }
 
 // ---------- processes ----------
-const AGENT_RE = /(^|\/)(grok|claude|agy)( +-{1,2}[A-Za-z][\w-]*(?:[ =](?!-)\S+)?)*? +-p\b|(^|\/|\s)codex(\.js)? exec\b/;   // flags may precede -p
 function psSnapshot() {
   return new Promise(resolve => {
     execFile('ps', ['-axwwo', 'pid=,ppid=,pgid=,stat=,etime=,lstart=,command='], { maxBuffer: 64 << 20 }, (err, out) => {
@@ -167,30 +168,8 @@ function psSnapshot() {
     });
   });
 }
-function esc(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
-const RUNNER_RE = new RegExp('^(?:/bin/)?bash \\S*' + esc(CFG.runnerScript) + ' (\\S+)');
 function mapProcesses(procs) {
-  const runners = {}; const kids = new Map(); let queueAlive = {};
-  for (const p of procs) { if (!kids.has(p.ppid)) kids.set(p.ppid, []); kids.get(p.ppid).push(p); }
-  for (const p of procs) {
-    let m;
-    if ((m = p.command.match(RUNNER_RE))) runners[m[1]] = { ...p };
-    else { const x = (CFG.extraRunners || []).find(x => new RegExp('^(?:/bin/)?bash \\S*' + esc(x.script) + '(\\s|$)').test(p.command)); if (x) runners[x.line] = { ...p }; }
-    for (const q of QUEUE_SCRIPTS) if (p.command.includes(q) && /bash/.test(p.command)) queueAlive[q] = p.pid;
-  }
-  for (const r of Object.values(runners)) {
-    // walk descendants for an agent process; fallback: same pgid
-    const stack = [...(kids.get(r.pid) || [])]; let agent = null;
-    while (stack.length && !agent) { const k = stack.shift(); if (AGENT_RE.test(k.command)) agent = k; else stack.push(...(kids.get(k.pid) || [])); }
-    if (!agent) agent = procs.find(k => k.pgid === r.pgid && k.pid !== r.pid && AGENT_RE.test(k.command)) || null;
-    if (agent) r.agent = { pid: agent.pid, stat: agent.stat, started: agent.started, etime: agent.etime, cmd: agent.command.split(' ').slice(0, 2).join(' ') };
-  }
-  // stand-alone `codex exec` jobs not owned by a tower runner (top-most codex process only)
-  const owned = new Set(); for (const r of Object.values(runners)) { const st = [r.pid]; while (st.length) { const x = st.pop(); owned.add(x); (kids.get(x) || []).forEach(k => st.push(k.pid)); } }
-  const byPid = new Map(procs.map(p => [p.pid, p]));
-  const CODEX_RE = /(^|\/|\s)codex(\.js)? exec\b/;
-  const orphans = procs.filter(p => CODEX_RE.test(p.command) && !owned.has(p.pid) && !(byPid.get(p.ppid) && CODEX_RE.test(byPid.get(p.ppid).command)));
-  return { runners, queueAlive, orphans };
+  return PROCESSES.mapProcesses(procs, { runnerScript: CFG.runnerScript, extraRunners: CFG.extraRunners || [], queueScripts: QUEUE_SCRIPTS });
 }
 function cwdOf(pid) {
   return new Promise(resolve => execFile('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn'], { timeout: 4000 }, (e, out) => {
@@ -399,16 +378,20 @@ function saveDispatched() { writeJSON(path.join(DATA, 'dispatched.json'), dispat
 let lastAutoAt = 0; let autoNote = null; let lastTable = {};
 
 function capacity(strips) {
-  const now = Date.now(); const out = {}; let total = 0;
-  for (const k of LANE_CODES) out[k] = { running: 0, cap: laneCfg(k).cap, holding: false, until: null };
-  for (const s of strips) {
-    const k = KEY2CODE[s.airline.key]; if (!k) continue;
-    if (s.runnerPid || s.agentPid) { out[k].running++; total++; }
-    if (s.status === 'HOLDING' && s.resumeAt > now) { out[k].holding = true; out[k].until = Math.max(out[k].until || 0, s.resumeAt); }
+  return PROCESSES.countCapacity(strips, {
+    laneCodes: LANE_CODES, key2code: KEY2CODE,
+    caps: Object.fromEntries(LANE_CODES.map(k => [k, laneCfg(k).cap])),
+    dispatched, now: Date.now(), globalCap: CFG.globalCap || 8, graceMs: 90e3,
+  });
+}
+function liveRunnersFromStrips(strips) {
+  const o = {};
+  for (const s of strips || []) {
+    if (!s.runnerPid) continue;
+    if (s.bay === 'goodday' || s.status === 'LANDED' || s.status === 'STOPPED' || s.status === 'DIVERTED') continue;
+    o[s.id] = { pid: s.runnerPid, agentPid: s.agentPid, status: s.status };
   }
-  // just-dispatched lines not yet visible in ps count too (avoid double launch)
-  for (const d of dispatched) if (now - d.at < 90e3 && !strips.some(s => s.id === d.line)) { out[d.lane].running++; total++; }
-  return { lanes: out, total, globalCap: CFG.globalCap || 8 };
+  return o;
 }
 // ETD (estimated time to enter TAKEOFF) for queued cards: auto pilot + free slot -> next auto departure (90 s apart);
 // airline holding for quota -> its resume time; full -> unknown (等待空位); MANUAL / lane auto off / CX -> 等你按 Takeoff
@@ -434,19 +417,22 @@ function autoPick(snap, lanes, settings) {
   for (const k of LANE_CODES) {
     if (laneCfg(k).manualOnly || !settings.auto[k]) continue;
     const ref = lanes[k].find(r => REPOS.dispatchable(r.split('#')[0]) && !ISSUES.isManualRef(r)); if (!ref) continue;
-    const c = cap.lanes[k];
-    const blocked = c.holding ? `${k} holding for quota until ${tpeStamp(c.until).slice(11, 16)}` : c.running >= c.cap ? `${k} at capacity ${c.running}/${c.cap}` : cap.total >= cap.globalCap ? `global cap ${cap.total}/${cap.globalCap}` : null;
+    const blocked = DISPATCH.autoCapBlock(cap, k);
     return { lane: k, ref, flight: PRODUCTS.flightLabel(k, ref.split('#')[0], ref.split('#')[1]), blocked, eta: blocked ? null : Math.max(Date.now() + POLL_MS, lastAutoAt + 90e3) };
   }
   return null;
 }
 async function doTakeoff(ref, lane, mode) {
   if (!LANE_CODES.includes(lane)) throw new Error('bad lane');
-  if (mode === 'auto' && laneCfg(lane).manualOnly) throw new Error(lane + ' is manual-only');
-  if (ISSUES.isManualRef(ref)) throw new Error('manual issue');   // needs a human on a real device
+  if (mode === 'auto' && laneCfg(lane).manualOnly) throw new Error(lane + ' 只能手動起飛');
+  if (ISSUES.isManualRef(ref)) throw new Error('需要實機的 issue 不能排進背景 agent');
+  if (DISPATCH.recentTakeoff(dispatched, ref, Date.now(), 90e3)) throw new Error('這張 90 秒內剛起飛過：' + ref);
   const issue = ISSUES.getIssue(ref);
   const cap = snapshot.capacity || capacity(snapshot.strips || []);
-  const r = await DISPATCH.takeoff(CFG, { ref, lane, mode, issue, table: lastTable, runnersAlive: cap.total, clone: issue && REPOS.clones()[issue.repo], product: issue && PRODUCTS.productOf(issue.repo) });
+  const blocked = mode === 'auto' ? DISPATCH.autoCapBlock(cap, lane) : (cap.total >= cap.globalCap ? `全域上限 ${cap.total}/${cap.globalCap} — 會被拒絕` : null);
+  if (mode === 'auto' && blocked) throw new Error(blocked);
+  if (mode !== 'auto' && cap.total >= cap.globalCap) throw new Error(`全域上限 ${cap.total}/${cap.globalCap} — 會被拒絕`);
+  const r = await DISPATCH.takeoff(CFG, { ref, lane, mode, issue, table: lastTable, runnersAlive: cap.total, clone: issue && REPOS.clones()[issue.repo], product: issue && PRODUCTS.productOf(issue.repo), liveRunners: liveRunnersFromStrips(snapshot.strips || []) });
   dispatched.push({ ref, lane, line: r.line, branch: r.branch, at: r.at, mode }); saveDispatched();
   const lanes = readLanes(); lanes[lane] = lanes[lane].filter(x => x !== ref); writeLanes(lanes);
   setTimeout(refresh, 3000);
@@ -480,11 +466,20 @@ async function refresh() {
     const pick = autoPick(snap, lanes, settings);
     snap.autopilot = { mode: settings.mode, next: pick, note: autoNote };
     try { snap.models = MODELS.view(CFG); } catch (e) { snap.models = { error: e.message }; }
+    try { snap.starbase = STARBASE.load(CFG); } catch (e) { snap.starbase = { generatedAt: Date.now(), hideHours: CFG.goodDayHideHours ?? 6, agents: [], error: String(e && e.message || e) }; }
     snapshot = snap;
-    if (settings.mode === 'AUTO' && pick && !pick.blocked && Date.now() - lastAutoAt > 90e3) {
-      lastAutoAt = Date.now();
-      doTakeoff(pick.ref, pick.lane, 'auto').then(r => { autoNote = `auto takeoff ${pick.flight} → ${r.line} ${tpeStamp().slice(11, 16)}`; })
-        .catch(e => { autoNote = `auto takeoff ${pick.flight} failed: ${e.message.slice(0, 160)}`; });
+    if (settings.mode === 'AUTO' && pick && Date.now() - lastAutoAt > 90e3) {
+      const liveCap = capacity(snap.strips);
+      snap.capacity = liveCap;
+      const blocked = DISPATCH.autoCapBlock(liveCap, pick.lane) || (DISPATCH.recentTakeoff(dispatched, pick.ref, Date.now(), 90e3) ? '這張 90 秒內剛起飛過' : null);
+      if (blocked) {
+        autoNote = `auto 未起飛 ${pick.flight}：${blocked}`;
+        snap.autopilot = { mode: settings.mode, next: { ...pick, blocked }, note: autoNote };
+      } else {
+        lastAutoAt = Date.now();
+        doTakeoff(pick.ref, pick.lane, 'auto').then(r => { autoNote = `auto 起飛 ${pick.flight} → ${r.line} ${tpeStamp().slice(11, 16)}`; })
+          .catch(e => { autoNote = `auto 未起飛 ${pick.flight}：${e.message.slice(0, 160)}`; });
+      }
     }
   })().catch(e => { snapshot.error = String(e && e.stack || e); }).finally(() => { building = null; });
   return building;
@@ -525,6 +520,12 @@ const server = http.createServer(async (req, res) => {
   try {
     if (req.method === 'GET' && url.pathname === '/api/token') return tokenOk(req) ? send(res, 200, JSON.stringify({ token: TOKEN })) : send(res, 403, JSON.stringify({ error: 'bad origin' }));
     if (req.method === 'GET' && url.pathname === '/api/strips') { if (!snapshot.generatedAt) await refresh(); return send(res, 200, JSON.stringify(snapshot)); }
+    if (req.method === 'GET' && url.pathname === '/api/starbase') {
+      let body;
+      try { body = CFG.demo ? require('./lib/demo').starbase() : STARBASE.load(CFG); }
+      catch (e) { body = { generatedAt: Date.now(), hideHours: CFG.goodDayHideHours ?? 6, agents: [], error: String(e && e.message || e) }; }
+      return send(res, 200, JSON.stringify(body));
+    }
     if (req.method === 'POST' && url.pathname.startsWith('/api/')) {
       const bad = guard(req); if (bad) return send(res, 403, JSON.stringify({ error: bad }));
       const j = await body(req);
@@ -533,7 +534,7 @@ const server = http.createServer(async (req, res) => {
         const lanes = readLanes();
         const blocked = [];
         for (const k of LANE_CODES) if (Array.isArray(j.lanes && j.lanes[k])) lanes[k] = [...new Set(j.lanes[k].filter(x => typeof x === 'string' && REF_RE.test(x) && (!ISSUES.isManualRef(x) || !blocked.push(x))))].slice(0, 100);
-        if (blocked.length) return send(res, 409, JSON.stringify({ error: 'manual issue', refs: blocked }));   // 實機驗證 issues can't be queued for a background agent
+        if (blocked.length) return send(res, 409, JSON.stringify({ error: '需要實機的 issue 不能排進背景 agent', refs: blocked }));
         writeLanes(lanes); refresh(); return send(res, 200, JSON.stringify({ lanes }));
       }
       if (url.pathname === '/api/dismiss') {   // hide a finished GOOD DAY card (undo = same call with undo:true)
@@ -561,17 +562,23 @@ const server = http.createServer(async (req, res) => {
       if (url.pathname === '/api/preview') {
         if (!REF_RE.test(j.ref || '') || !LANE_CODES.includes(j.lane)) return send(res, 400, JSON.stringify({ error: 'bad ref/lane' }));
         const issue = ISSUES.getIssue(j.ref); if (!issue) return send(res, 404, JSON.stringify({ error: 'issue not in cache' }));
-        const prim = issue.repo === REPO; const plan = DISPATCH.planFor(issue, j.lane, lastTable, prim ? null : PRODUCTS.productOf(issue.repo).short); const cap = snapshot.capacity;
+        const prim = issue.repo === REPO; const plan = DISPATCH.planFor(issue, j.lane, lastTable, prim ? null : PRODUCTS.productOf(issue.repo).short); const cap = snapshot.capacity || capacity(snapshot.strips || []);
         const warn = [];
         if (!REPOS.dispatchable(issue.repo)) warn.push('browse-only: no local clone of ' + issue.repo);
         else if (issue.repo !== REPO) warn.push(`other repo: worktree from ${REPOS.clones()[issue.repo]}, generic prompt template, base = its default branch`);
-        if (cap) { const c = cap.lanes[j.lane]; if (c.running >= c.cap) warn.push(`${j.lane} over its cap (${c.running}/${c.cap}) — manual takeoff still allowed`); if (c.holding) warn.push(`${j.lane} is holding for quota`); if (cap.total >= cap.globalCap) warn.push(`global cap reached ${cap.total}/${cap.globalCap} — takeoff will be refused`); }
-        return send(res, 200, JSON.stringify({ ref: j.ref, lane: j.lane, agent: plan.agent, airline: plan.airline, line: plan.line, branch: plan.branch, pf: plan.pf, base: prim ? 'origin/' + (CFG.baseBranches || ['main'])[0] : 'origin/<default branch>', repo: issue.repo, product: PRODUCTS.productOf(issue.repo), clone: REPOS.clones()[issue.repo] || null, issue: { number: issue.number, title: issue.title, milestone: issue.milestone }, warn }));
+        if (cap) {
+          const c = cap.lanes[j.lane] || { running: 0, cap: 0 };
+          warn.push(...DISPATCH.capWarnings({ lane: j.lane, running: c.running, cap: c.cap, holding: c.holding, total: cap.total, globalCap: cap.globalCap }));
+        }
+        const live = liveRunnersFromStrips(snapshot.strips || [])[plan.line];
+        if (plan.exists && live) warn.push(`這條已經在飛：${plan.line}（PID ${live.pid}）`);
+        else if (plan.exists) warn.push(`將重用既有 line ${plan.line}（worktree／branch 不變）`);
+        return send(res, 200, JSON.stringify({ ref: j.ref, lane: j.lane, agent: plan.agent, airline: plan.airline, line: plan.line, branch: plan.branch, pf: plan.pf, base: prim ? 'origin/' + (CFG.baseBranches || ['main'])[0] : 'origin/<default branch>', repo: issue.repo, product: PRODUCTS.productOf(issue.repo), clone: REPOS.clones()[issue.repo] || null, issue: { number: issue.number, title: issue.title, milestone: issue.milestone }, warn: DISPATCH.uniqMsgs(warn), flying: !!(plan.exists && live), pid: live && live.pid }));
       }
       if (url.pathname === '/api/takeoff') {
         if (!REF_RE.test(j.ref || '') || !LANE_CODES.includes(j.lane)) return send(res, 400, JSON.stringify({ error: 'bad ref/lane' }));
         try { const r = await doTakeoff(j.ref, j.lane, 'manual'); return send(res, 200, JSON.stringify(r)); }
-        catch (e) { return send(res, 409, JSON.stringify({ error: e.message, steps: e.steps || [] })); }
+        catch (e) { return send(res, 409, JSON.stringify({ error: e.message, steps: e.steps || [], flying: !!e.flying, line: e.line || null, pid: e.pid || null })); }
       }
       return send(res, 404, JSON.stringify({ error: 'not found' }));
     }

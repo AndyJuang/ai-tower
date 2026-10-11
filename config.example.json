@@ -13,6 +13,12 @@
   "queueScripts": [],
   "extraRunners": [],
   "goodDayHideHours": 6,
+  "starbaseDir": "{logsDir}/starbase/agents",
+  "starbaseAgents": [
+    { "name": "沃茲", "role": "桌面 App", "vehicle": "starship" },
+    { "name": "克雷格", "role": "iPhone/iPad App", "vehicle": "falcon9" },
+    { "name": "強尼", "role": "設計", "vehicle": "mcgregor" }
+  ],
   "manualIssueRegex": "manual|實機",
   "manualSectionTitle": "需要實機 · 手動測試",
   "issueRepos": [

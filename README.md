@@ -1,4 +1,4 @@
-# AI Tower ✈
+# AI Tower ✈ `v0.2.0`
 
 **A local control tower for background AI coding agents** — shows every agent job as a retro flight strip and lets you dispatch GitHub issues to agents (Grok CLI, Claude Code, Codex CLI, Antigravity) with one **Takeoff** button.
 
@@ -26,6 +26,8 @@ Agents are shown as airlines — **GK Grok Air**, **CL Claude Airways**, **CX Co
 | **READY TO FLY** | four airline lanes — drag issues in to queue them; runners between rounds (TAXI) or waiting for quota (HOLDING) also live here |
 | **TAKEOFF** | agent process running now, live elapsed timer |
 | **GOOD DAY** | finished (READY TO MERGE) · STOPPED (intentional, grey) · **DIVERTED** (abnormal exit, red, plus an alert row). **✕ 已知道** hides a card (5 s undo, kept in `data/dismissed.json`); every card auto-hides after `goodDayHideHours` (default 6) |
+
+Above the four bays, **StarBase** (v0.2.0) shows three DEV Grok Bot pads — 沃茲 (Starship / desktop), 克雷格 (Falcon 9 / iPhone·iPad), 強尼 (McGregor stand / design). Other agents are ignored. See [StarBase](#starbase).
 
 Flight number = airline code + the line's **primary issue** (first `#N` in its runner-table comment, else in its progress file); other issues show as blue tags.
 
@@ -60,7 +62,8 @@ cp examples/runner.example.sh <logsDir>/runner.sh
 | `lanes.XX.cap / auto / manualOnly / idleLabel`, `globalCap` | capacity and auto-pilot rules |
 | `agentBins`, `modelCatalog` | optional CLI paths and a static model/effort list per lane (overrides discovery) |
 | `manualIssueRegex`, `manualSectionTitle` | issues that need a real device (matched on labels and the start of the title) and the PARK section title |
-| `goodDayHideHours`, `landedKeepMin` | GOOD DAY auto-hide (default 6 h) and when LANDED cards dim (30 min) |
+| `goodDayHideHours`, `landedKeepMin` | GOOD DAY auto-hide (default 6 h) and when LANDED cards dim (30 min). StarBase “已升空” uses the same hide window |
+| `starbaseDir`, `starbaseAgents` | StarBase status directory (default `{logsDir}/starbase/agents`) and the three pads (`name` / `role` / `vehicle`: `starship` · `falcon9` · `mcgregor`) |
 | `doneRegex`, `stopByNames`, `tzLabel`, `cutoffHour`, `launchPrefix` | progress "done" marker, who counts as an intentional stop, clock label, runner cutoff hour, launch prefix (default `nice -n 10` [+ `caffeinate -i` on macOS]) |
 
 Local state (`data/`: lane order, settings, issue cache, dispatched list) is gitignored. `titles.json` (optional) maps line/branch → friendly title.
@@ -77,6 +80,41 @@ Local state (`data/`: lane order, settings, issue cache, dispatched list) is git
 - One dispatch repo at a time; other repos are browsable in PARK only.
 - "Do not dispatch while I'm recording/presenting" is not implemented — use MANUAL mode.
 
+### StarBase
+
+A night launch complex above the airport board. Each of the three agents is a pad; each task is a rocket.
+
+| Agent | Role | Vehicle |
+|---|---|---|
+| 沃茲 | desktop app | Starship (stainless Super Heavy + ship, chopsticks) |
+| 克雷格 | iPhone / iPad app | Falcon 9 (white two-stage, black interstage, grid fins, umbilical tower) |
+| 強尼 | design | McGregor engine stand (steel gantry, nozzle, test cart) |
+
+| Task status | Pad |
+|---|---|
+| 排隊 / `queued` / `ready` | rocket on the pad, **T- 待命** |
+| 進行中 / `in_progress` / `running` | fueling: steam, fuel bar, blinking tower lights |
+| 卡住 / `blocked` | **HOLD · 卡住**, steam off |
+| 完成 / `done` | one liftoff (if `done_at` is within 90 s, or the page just saw it finish), then **已升空**. Hidden after `goodDayHideHours` (default 6 h) |
+
+Status files are written by the agents themselves. The tower only reads them.
+
+- Path: `starbaseDir` / `<agent>.json` (default `{logsDir}/starbase/agents/沃茲.json` …).
+- Shape: one object, an array, or `{ "tasks": [...] }`.
+- Fields: `agent`, `task`, `status`, `started_at`, `updated_at`, `done_at`, `link` (http/https only), `note`.
+- A half-written / invalid JSON file keeps the last good read; a missing file means no tasks.
+- Read-only API: `GET /api/starbase` (same host guard, `no-store`). The same payload is on `/api/strips` as `starbase`, so the page does not need a second poll.
+
+Helper (atomic write, upsert by task title):
+
+```bash
+STARBASE_DIR=~/projects/_agent-logs/starbase/agents
+cp examples/starbase-report.sh "$STARBASE_DIR/../starbase-report.sh"   # optional
+STARBASE_DIR="$STARBASE_DIR" ./examples/starbase-report.sh 沃茲 進行中 "StarBase 模式開發" https://github.com/example/ai-tower "note"
+```
+
+Demo: `TOWER_DEMO=1` includes all four statuses on the three pads.
+
 ---
 
 ## 繁體中文
@@ -92,6 +130,8 @@ AI Tower 是一個本機「塔台」：把背景跑的 AI 寫程式代理（Grok
 | **READY TO FLY 排班** | 四條航空公司跑道；拖進來就排班。輪與輪之間（TAXI）或等額度（HOLDING）的 runner 也在這 |
 | **TAKEOFF 飛行中** | agent 程序正在跑，即時計時 |
 | **GOOD DAY 已落地** | 完成（READY TO MERGE／可整合）、STOPPED（刻意停止，灰）、**DIVERTED**（異常結束，紅＋警示列）。按 **✕ 已知道** 可隱藏（5 秒內可撤銷，記在 `data/dismissed.json`）；超過 `goodDayHideHours`（預設 6 小時）自動隱藏 |
+
+最上層 **StarBase**（v0.2.0）只顯示三位 DEV Grok Bot：沃茲（Starship／桌面 App）、克雷格（Falcon 9／iPhone·iPad）、強尼（麥格雷戈測試平台／設計）。其他 agent 忽略。見下方「StarBase」。
 
 航班號 = 航空公司代碼 + 該 line 的**主要 issue**（runner 對照表註解中的第一個 `#N`，沒有就看進度檔）；其他 issue 顯示為藍色標籤。
 
@@ -113,7 +153,7 @@ cp examples/runner.example.sh <logsDir>/runner.sh
 ./install.sh               # 或 ./start.sh / ./stop.sh
 ```
 
-設定項目見上方英文表格；本機狀態（`data/`：跑道順序、設定、issue 快取、派工紀錄）與 `config.json` 都不進 git。
+設定項目見上方英文表格；本機狀態（`data/`：跑道順序、設定、issue 快取、派工紀錄）與 `config.json` 都不進 git。StarBase 另讀 `starbaseDir`（預設 `{logsDir}/starbase/agents`）裡的 `<agent>.json`。
 
 ### 安全性
 - 只綁 **127.0.0.1**；`Host` 不是本機的請求一律拒絕（防 DNS rebinding）。
@@ -126,6 +166,42 @@ cp examples/runner.example.sh <logsDir>/runner.sh
 - 日誌解析依賴範例 runner 的格式與 `LC_ALL=C date` 輸出。
 - 一次只派工到一個 repo；其他 repo 只能在 PARK 瀏覽。
 - 「錄影／簡報中不要派工」尚未實作——請用 MANUAL 模式。
+
+### StarBase
+
+機場塔台上方的夜間發射場。每個 agent 一個發射台，每個任務是一枚火箭。
+
+| Agent | 負責 | 發射設施 |
+|---|---|---|
+| 沃茲 | 桌面 App | **Starship**（不鏽鋼銀色超重型＋星艦、筷子機械臂） |
+| 克雷格 | iPhone/iPad App | **Falcon 9**（白色兩節、黑色級間段、四片格柵翼、臍帶臂） |
+| 強尼 | 設計 | **麥格雷戈測試平台**（鋼架、引擎噴口、測試台車） |
+
+| 任務狀態 | 畫面 |
+|---|---|
+| 排隊（`queued` / `ready`） | 火箭立在台上，**T- 待命** |
+| 進行中（`in_progress` / `running`） | 加注：底部蒸氣、燃料條、塔燈閃爍 |
+| 卡住（`blocked`） | **HOLD · 卡住**，蒸氣停止 |
+| 完成（`done`） | `done_at` 在 90 秒內、或頁面剛看到它完成時，播一次升空，之後進 **已升空**。超過 `goodDayHideHours`（預設 6 小時）隱藏 |
+
+狀態檔由 agent 自己寫，塔台只讀。
+
+- 路徑：`starbaseDir`／`<agent>.json`（預設 `{logsDir}/starbase/agents/`）。
+- 格式：單一物件、物件陣列、或 `{ "tasks": [...] }`。
+- 欄位：`agent`、`task`、`status`、`started_at`、`updated_at`、`done_at`、`link`（只接受 http/https）、`note`。
+- 寫到一半或壞 JSON：沿用上次成功讀到的內容；檔案不存在＝沒任務。
+- `GET /api/starbase`（唯讀、host 檢查、`no-store`）；同一份資料也在 `/api/strips` 的 `starbase` 欄位，前端跟著 10 秒 poll 更新。
+- 標題列可收合 StarBase（狀態存在 localStorage，預設展開）。`prefers-reduced-motion` 時關閉蒸氣／閃爍／升空。
+
+Helper（原子寫入，同一個 task 標題會更新同一筆）：
+
+```bash
+STARBASE_DIR=~/projects/_agent-logs/starbase/agents
+./examples/starbase-report.sh 沃茲 進行中 "StarBase 模式開發" https://github.com/example/ai-tower "Grok CLI 實作中"
+./examples/starbase-report.sh 沃茲 完成 "StarBase 模式開發"
+```
+
+`TOWER_DEMO=1` 的示範資料涵蓋四種狀態。
 
 ## License
 [MIT](LICENSE)
