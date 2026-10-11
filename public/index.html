@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="tower-token" content="__TOWER_TOKEN__">
+<title>AI Tower</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="title-row">
+    <h1><span class="tw">▲</span> AI TOWER</h1>
+    <div class="mode" id="mode" role="group" aria-label="Dispatch mode">
+      <button type="button" data-mode="MANUAL">MANUAL</button><button type="button" data-mode="AUTO">AUTO PILOT</button>
+    </div>
+    <div class="ap-hint" id="ap-hint"></div>
+    <div class="clock" aria-label="Taipei time"><span id="clock"></span><small><span id="clock-date"></span></small></div>
+  </div>
+  <div class="airlines" id="airlines" aria-label="Airlines"></div>
+</header>
+<main class="bays" id="bays">
+  <section class="bay" data-bay="park">
+    <header><h2>PARK <span class="zh">待辦</span></h2><span class="count" id="park-count"></span></header>
+    <div class="filters">
+      <input id="f-q" type="search" placeholder="搜尋標題或 #號碼" aria-label="搜尋">
+      <select id="f-ms" aria-label="Milestone"></select>
+      <select id="f-repo" aria-label="Repo"></select>
+    </div>
+    <ol class="lane-active" id="park-sched"></ol>
+    <ol class="rack park-rack" id="park-rack" data-drop="park" data-empty="沒有符合的 open issue"></ol>
+  </section>
+  <section class="bay" data-bay="ready">
+    <header><h2>READY TO FLY <span class="zh">排班</span></h2><span class="count" id="ready-count"></span></header>
+    <div id="lanes" class="lanes"></div>
+  </section>
+  <section class="bay" data-bay="takeoff">
+    <header><h2>TAKEOFF <span class="zh">飛行中</span></h2><span class="count" id="takeoff-count"></span></header>
+    <ol class="rack" id="takeoff-rack" data-empty="目前沒有 agent 在跑"></ol>
+  </section>
+  <section class="bay" data-bay="goodday">
+    <header><h2>GOOD DAY <span class="zh">已落地</span></h2><span class="count" id="goodday-count"></span></header>
+    <div class="alert" id="alert" hidden></div>
+    <ol class="rack" id="goodday-rack" data-empty="最近沒有落地"></ol>
+  </section>
+</main>
+<footer class="foot" id="feed">connecting…</footer>
+<div class="undo" id="undo" hidden><button type="button" id="undo-btn">↩ 撤銷剛才的排序調整</button><div class="undo-bar"></div></div>
+<div class="toast" id="toast" hidden role="status"></div>
+<div class="sr-only" aria-live="assertive" id="live"></div>
+<script src="app.js"></script>
+</body>
+</html>

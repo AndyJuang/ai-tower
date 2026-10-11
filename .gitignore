@@ -1,0 +1,13 @@
+# local state — never commit
+config.json
+data/
+prompt-template.local.md
+config.local-*.json
+titles.json
+snapshot.json
+issue-cache.json
+queue-order.json*
+tower.log
+tower.pid
+*.tmp
+node_modules/

@@ -1,0 +1,52 @@
+{
+  "_doc": "Copy to config.json (install.sh does this) and edit. Paths may start with ~ and use {baseDir} / {logsDir}. config.json and data/ are gitignored.",
+  "port": 4777,
+  "baseDir": "~/projects",
+  "logsDir": "{baseDir}/_agent-logs",
+  "runnerScript": "runner.sh",
+  "logPattern": "{line}.log",
+  "promptPattern": "{line}-prompt.md",
+  "detachOutPattern": "{line}-detach.out",
+  "worktreePattern": "{baseDir}/my-app-wt-{line}",
+  "mainCheckout": "{baseDir}/my-app",
+  "detachScript": "detach.py",
+  "queueScripts": [],
+  "extraRunners": [],
+  "issueRepos": [
+    "your-name/my-app"
+  ],
+  "dispatchRepo": "your-name/my-app",
+  "baseBranches": [
+    "main"
+  ],
+  "titlesFile": "data/titles.json",
+  "promptTemplate": "prompt-template.example.md",
+  "fullTestsCmd": "npm test",
+  "globalCap": 8,
+  "lanes": {
+    "GK": {
+      "cap": 6,
+      "auto": true
+    },
+    "CL": {
+      "cap": 2,
+      "auto": false
+    },
+    "CX": {
+      "cap": 2,
+      "auto": false,
+      "manualOnly": true,
+      "idleLabel": "manual only"
+    },
+    "AG": {
+      "cap": 2,
+      "auto": false
+    }
+  },
+  "landedKeepMin": 30,
+  "divertedKeepMin": 180,
+  "demo": false,
+  "tzLabel": "",
+  "cutoffHour": 8,
+  "doneRegex": "READY TO MERGE|可整合"
+}
