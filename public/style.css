@@ -151,3 +151,21 @@ body.dragging{cursor:grabbing;user-select:none}
 .lane .qitem .main{padding:8px 10px}.lane .qitem .flt{padding-bottom:4px;margin-bottom:4px}
 .qitem>.band{grid-column:1}.qitem>.main{grid-column:2;grid-row:1/3}.qitem>.tk{grid-column:3}.qitem>.handle{grid-column:4}
 .strip>.band{grid-column:1;grid-row:1/3}.strip>.main{grid-column:2/-1;grid-row:1}.strip>.more{grid-column:2/-1;grid-row:2}
+/* v0.1.2 — no horizontal overflow; thin retro scrollbars */
+.bay,.lane,.rack,.lane-active,.lanes{min-width:0;max-width:100%}
+.rack,.lane-active,.park-rack,#takeoff-rack,#goodday-rack{overflow-x:hidden}
+.strip,.qitem{min-width:0;max-width:100%;overflow:hidden}          /* clips the TAKEOFF sweep line (was scrolling the column sideways) */
+.qitem.lifted{overflow:visible}
+.main,.flt,.row,.time{min-width:0}
+.line{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.strip.open .line{white-space:normal;overflow-wrap:anywhere}
+.fno,.aname{white-space:nowrap}
+.aname{overflow:hidden;text-overflow:ellipsis;min-width:0}
+.time{flex-wrap:wrap;row-gap:4px}
+.more code{overflow-wrap:anywhere}
+.rack,.park-rack{scrollbar-width:thin;scrollbar-color:#8a7d5c #1b2026}
+.rack::-webkit-scrollbar{width:8px;height:0}
+.rack::-webkit-scrollbar-track{background:#1b2026;border-radius:4px}
+.rack::-webkit-scrollbar-thumb{background:linear-gradient(90deg,#b9ad8c,#8a7d5c);border-radius:4px;border:1px solid #0b0d10}
+.rack::-webkit-scrollbar-thumb:hover{background:#d9cfb2}
+.rack::-webkit-scrollbar-corner{background:transparent}
