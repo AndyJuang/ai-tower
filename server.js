@@ -214,7 +214,7 @@ function readProgress(line, info) {
   const lines = txt.split('\n'); const head = lines.slice(0, 12).join('\n');
   const st = lines.find(l => /(狀態|^\W*Status)\s*[：:]/i.test(l)) || lines.find(l => l.includes('狀態') && !/^\s*[#|]/.test(l)) || '';
   return { file: path.relative(BASE, file), status: st.replace(/[*#>`-]/g, '').trim().slice(0, 80),
-    done: DONE_RE.test(head) && !/進行中|用量上限暫停|in progress/i.test(head) };
+    done: (/(狀態|Status)\s*[：:]/i.test(st) ? st : head).match(DONE_RE) != null && !/進行中|用量上限暫停|in progress/i.test(/(狀態|Status)\s*[：:]/i.test(st) ? st : head) };   // judge the status line itself when there is one (same rule as the runner)
 }
 
 // ---------- queue files ----------
@@ -296,7 +296,10 @@ async function buildSnapshot() {
     if (runner && (/T/.test(runner.stat) || (runner.agent && /T/.test(runner.agent.stat)))) s.tags.push('暫停');
     if (runner && QUEUE_SCRIPTS.length && !launchedByQueue.has(line) && !EXTRA[line] && !/-i\d+/.test(line)) s.tags.push('插入');
 
-    if (runner) {
+    if (runner && !runner.agent && progress.done) {   // finished work never goes back to READY, even if the runner is still looping
+      s.status = 'LANDED'; s.bay = 'goodday'; s.endedAt = s.readyAt || (evs.filter(e => e.type === 'EXIT' && e.t).pop() || {}).t || now;
+      s.reason = 'runner 仍在待命（進度檔已「可整合」）'; s.tags.push('runner 待命'); if (s.std) s.flightMin = Math.round((s.endedAt - s.std) / 60e3);
+    } else if (runner) {
       if (runner.agent) { s.status = 'TAKEOFF'; s.bay = 'takeoff'; s.since = lastStart && lastStart.t || runner.agent.started; }
       if (!runner.agent) s.readyAt = (evs.filter(e => e.type === 'EXIT' && e.t).pop() || {}).t || null;   // entered READY = end of the last round
       if (runner.agent) {} else if (last && last.type === 'SLEEP') { s.status = 'HOLDING'; s.bay = 'ready'; s.resumeAt = last.resumeAt; s.quota = 'waiting for quota until ' + fmtHM(last.resumeAt); s.since = s.std; }
