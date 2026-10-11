@@ -4,7 +4,7 @@
   const qs = new URLSearchParams(location.search);
   const API = qs.get('api') || '/api/strips';
   const FROZEN = qs.has('frozen');                       // static snapshot (screenshots)
-  const TOKEN = (document.querySelector('meta[name=tower-token]') || {}).content || '';
+  let TOKEN = (document.querySelector('meta[name=tower-token]') || {}).content || '';
   const POLL = 10000;
   const LANES = ['GK', 'CL', 'CX', 'AG'];
   const KEY = { GK: 'grok', CL: 'claude', CX: 'codex', AG: 'antigravity' };
@@ -25,10 +25,25 @@
   const flap = (txt, cls = '') => `<span class="flap ${cls}">${String(txt).split('').map(ch => ch === ':' || ch === ' ' ? `<i class="sep">${ch === ' ' ? '&nbsp;' : ':'}</i>` : `<i>${esc(ch)}</i>`).join('')}</span>`;
   function announce(t) { live.textContent = ''; setTimeout(() => { live.textContent = t; }, 30); }
   function toast(msg, kind) { const t = $('#toast'); t.textContent = msg; t.className = 'toast ' + (kind || ''); t.hidden = false; clearTimeout(t._h); t._h = setTimeout(() => { t.hidden = true; }, kind === 'err' ? 12000 : 6000); }
-  async function post(p, body) {
+  const FRIENDLY = {
+    'bad token': '塔台連線憑證已更新，自動重試也沒成功 — 請重新整理頁面（⌘R）再按一次',
+    'bad origin': '請從 http://127.0.0.1 塔台網址開啟這個頁面再操作',
+    'bad host': '請用 http://127.0.0.1 開啟塔台（不支援其他主機名稱）',
+    'bad content-type': '瀏覽器送出的格式不對，請重新整理頁面',
+  };
+  async function refreshToken() {
+    const r = await fetch('/api/token', { cache: 'no-store' }); if (!r.ok) return false;
+    const j = await r.json().catch(() => ({})); if (!j.token) return false; TOKEN = j.token; return true;
+  }
+  async function post(p, body, retried) {
     if (FROZEN) return { ok: true, frozen: true };
-    const r = await fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Tower-Token': TOKEN }, body: JSON.stringify(body) });
-    const j = await r.json().catch(() => ({})); if (!r.ok) throw Object.assign(new Error(j.error || r.status), { data: j }); return j;
+    let r;
+    try { r = await fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Tower-Token': TOKEN }, body: JSON.stringify(body) }); }
+    catch (e) { throw new Error('連不到塔台伺服器（可能正在重新啟動），請稍候幾秒再試'); }
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 403 && j.error === 'bad token' && !retried && await refreshToken().catch(() => false)) return post(p, body, true);   // server restarted: new token, retry once
+    if (!r.ok) throw Object.assign(new Error(FRIENDLY[j.error] || j.error || ('HTTP ' + r.status)), { data: j });
+    return j;
   }
 
   // ---------- clock ----------

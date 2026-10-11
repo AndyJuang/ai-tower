@@ -59,7 +59,7 @@ Local state (`data/`: lane order, settings, issue cache, dispatched list) is git
 
 ### Security
 - Binds **127.0.0.1 only**; requests with a non-loopback `Host` are refused (DNS-rebinding guard).
-- Mutating endpoints (`/api/lanes`, `/api/settings`, `/api/preview`, `/api/takeoff`) need the **per-session token** embedded in the served page **and** a same-origin `Origin` header.
+- Mutating endpoints (`/api/lanes`, `/api/settings`, `/api/preview`, `/api/takeoff`) need the **session token** embedded in the served page **and** a same-origin `Origin` header. The token is kept in `data/session-token` (gitignored, mode 600) so it survives restarts; an open page that hits a stale token re-reads it from `/api/token` (same-origin only) and retries once.
 - Read-only towards running jobs: it never kills or edits a running runner; the runner file is only appended to (with backup) on Takeoff.
 - Codex lane is manual-only by default. Background agents are told (prompt template) never to open GUI apps or browsers.
 - No telemetry, no external calls except `gh` / `git` you already use.
@@ -106,7 +106,7 @@ cp examples/runner.example.sh <logsDir>/runner.sh
 
 ### 安全性
 - 只綁 **127.0.0.1**；`Host` 不是本機的請求一律拒絕（防 DNS rebinding）。
-- 會改動狀態的 API 需要頁面內嵌的**每次啟動隨機 token**，且 `Origin` 必須同源。
+- 會改動狀態的 API 需要頁面內嵌的 **session token**，且 `Origin` 必須同源。token 存在 `data/session-token`（不進 git、權限 600），重啟後不變；已開著的頁面若遇到舊 token，會自動向 `/api/token`（限同源）重新取得並重試一次。
 - 對執行中的工作唯讀：不會砍或修改正在跑的 runner；只有 Takeoff 會在備份後新增 runner 條目。
 - Codex 跑道預設只能手動起飛；prompt 範本要求背景代理不得開任何 GUI 或瀏覽器。
 - 沒有遙測；除了你本來就在用的 `gh`／`git` 之外不連外。

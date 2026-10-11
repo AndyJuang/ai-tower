@@ -27,7 +27,12 @@ const LANDED_KEEP_MIN = CFG.landedKeepMin || 30;      // visible after landing, 
 const LANDED_DROP_MIN = LANDED_KEEP_MIN + 2;      // dropped from API after this
 const DIVERTED_KEEP_MIN = CFG.divertedKeepMin || 180;
 const QUEUE_SCRIPTS = CFG.queueScripts || [];
-const TOKEN = crypto.randomBytes(24).toString('hex'); // per server session, embedded in the served page
+// session token: embedded in the served page; kept in data/session-token (gitignored, 0600) so it survives restarts
+const TOKEN = (() => {
+  const f = path.join(CFG.dataDir, 'session-token');
+  try { const t = fs.readFileSync(f, 'utf8').trim(); if (/^[0-9a-f]{48}$/.test(t)) return t; } catch {}
+  const t = crypto.randomBytes(24).toString('hex'); fs.writeFileSync(f, t + '\n', { mode: 0o600 }); return t;
+})();
 
 const MON = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
 // `LC_ALL=C date` output, e.g. "Sun Oct 11 21:24:16 CST 2026" — parsed as the machine's local time
@@ -464,12 +469,19 @@ function guard(req) { // mutating endpoints: session token + same-origin + loopb
   if (!/^application\/json/.test(req.headers['content-type'] || '')) return 'bad content-type';
   return null;
 }
+// token refresh for an already-open page: same-origin only (no CORS headers are ever sent, and Host is loopback-checked)
+function tokenOk(req) {
+  const o = req.headers.origin; if (o && !ALLOWED_ORIGINS.has(o)) return false;
+  const s = req.headers['sec-fetch-site']; if (s && !['same-origin', 'none'].includes(s)) return false;
+  return true;
+}
 function body(req) { return new Promise((resolve, reject) => { let b = ''; req.on('data', d => { b += d; if (b.length > 2e5) { reject(new Error('too large')); req.destroy(); } }); req.on('end', () => { try { resolve(JSON.parse(b || '{}')); } catch (e) { reject(e); } }); }); }
 const REF_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#\d{1,6}$/;
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   if (!ALLOWED_HOSTS.has(req.headers.host || '')) return send(res, 421, JSON.stringify({ error: 'bad host' }));
   try {
+    if (req.method === 'GET' && url.pathname === '/api/token') return tokenOk(req) ? send(res, 200, JSON.stringify({ token: TOKEN })) : send(res, 403, JSON.stringify({ error: 'bad origin' }));
     if (req.method === 'GET' && url.pathname === '/api/strips') { if (!snapshot.generatedAt) await refresh(); return send(res, 200, JSON.stringify(snapshot)); }
     if (req.method === 'POST' && url.pathname.startsWith('/api/')) {
       const bad = guard(req); if (bad) return send(res, 403, JSON.stringify({ error: bad }));
