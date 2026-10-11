@@ -15,6 +15,7 @@ const CFG = loadConfig();
 const { run, readJSON, writeJSON, tpeStamp } = require('./lib/util');
 const ISSUES = require('./lib/issues');
 const DISPATCH = require('./lib/dispatch');
+const MODELS = require('./lib/models');
 const PORT = CFG.port;
 const BASE = CFG.baseDir;
 const L = CFG.logsDir;
@@ -137,7 +138,7 @@ function parseEvent(type, raw) {
 }
 
 // ---------- processes ----------
-const AGENT_RE = /(^|\/)(grok -p|claude -p|agy -p)\b|(^|\/|\s)codex(\.js)? exec\b/;
+const AGENT_RE = /(^|\/)(grok|claude|agy)( +-{1,2}[A-Za-z][\w-]*(?:[ =](?!-)\S+)?)*? +-p\b|(^|\/|\s)codex(\.js)? exec\b/;   // flags may precede -p
 function psSnapshot() {
   return new Promise(resolve => {
     execFile('ps', ['-axwwo', 'pid=,ppid=,pgid=,stat=,etime=,lstart=,command='], { maxBuffer: 64 << 20 }, (err, out) => {
@@ -297,7 +298,8 @@ async function buildSnapshot() {
 
     if (runner) {
       if (runner.agent) { s.status = 'TAKEOFF'; s.bay = 'takeoff'; s.since = lastStart && lastStart.t || runner.agent.started; }
-      else if (last && last.type === 'SLEEP') { s.status = 'HOLDING'; s.bay = 'ready'; s.resumeAt = last.resumeAt; s.quota = 'waiting for quota until ' + fmtHM(last.resumeAt); s.since = s.std; }
+      if (!runner.agent) s.readyAt = (evs.filter(e => e.type === 'EXIT' && e.t).pop() || {}).t || null;   // entered READY = end of the last round
+      if (runner.agent) {} else if (last && last.type === 'SLEEP') { s.status = 'HOLDING'; s.bay = 'ready'; s.resumeAt = last.resumeAt; s.quota = 'waiting for quota until ' + fmtHM(last.resumeAt); s.since = s.std; }
       else if (last && last.type === 'WAIT' || (!last && runner)) { s.status = 'SCHEDULED'; s.bay = 'park'; s.etd = last && last.until; }
       else { s.status = 'TAXI'; s.bay = 'ready'; s.since = s.std;
         if (last && last.type === 'ROUND') s.nextAt = last.nextAt;
@@ -356,13 +358,16 @@ async function buildSnapshot() {
 // ---------- v3: lanes, park, settings, auto pilot ----------
 const LANE_CODES = ['GK', 'CL', 'CX', 'AG'];
 const KEY2CODE = { grok: 'GK', claude: 'CL', codex: 'CX', antigravity: 'AG' };
-function laneCfg(code) { const base = DISPATCH.LANES[code]; const c = (CFG.lanes || {})[code] || {}; return { ...base, cap: c.cap ?? base.cap, manualOnly: !!c.manualOnly || code === 'CX', autoDefault: c.auto ?? base.autoDefault, idleLabel: c.idleLabel || 'idle' }; }
+function laneCfg(code) { const base = DISPATCH.LANES[code]; const c = (CFG.lanes || {})[code] || {}; return { ...base, cap: c.cap ?? base.cap, manualOnly: !!c.manualOnly, autoDefault: c.auto ?? base.autoDefault, idleLabel: c.idleLabel || 'idle' }; }
 function readLanes() {
   const o = readJSON(ORDER_FILE, {}); const lanes = {};
   for (const k of LANE_CODES) lanes[k] = Array.isArray(o.lanes && o.lanes[k]) ? o.lanes[k].filter(x => typeof x === 'string') : [];
   return lanes;
 }
-function writeLanes(lanes) { writeJSON(ORDER_FILE, { lanes, updatedAt: new Date().toISOString(), note: 'AI Tower READY TO FLY lanes (issue refs owner/repo#N). Auto pilot / Takeoff read this file.' }); }
+function writeLanes(lanes) {
+  const prev = readJSON(ORDER_FILE, {}).queuedAt || {}; const queuedAt = {}; const now = Date.now();
+  for (const k of LANE_CODES) for (const r of lanes[k]) queuedAt[r] = prev[r] || now;   // time the card was put into READY (kept across lane moves)
+  writeJSON(ORDER_FILE, { lanes, queuedAt, updatedAt: new Date().toISOString(), note: 'AI Tower READY TO FLY lanes (issue refs owner/repo#N). Auto pilot / Takeoff read this file.' }); }
 function readSettings() {
   const s = readJSON(SETTINGS_FILE, {}); const auto = {};
   for (const k of LANE_CODES) { const lc = laneCfg(k); auto[k] = lc.manualOnly ? false : (s.auto && typeof s.auto[k] === 'boolean' ? s.auto[k] : lc.autoDefault); }
@@ -385,10 +390,23 @@ function capacity(strips) {
   for (const d of dispatched) if (now - d.at < 90e3 && !strips.some(s => s.id === d.line)) { out[d.lane].running++; total++; }
   return { lanes: out, total, globalCap: CFG.globalCap || 8 };
 }
-function laneView(lanes, cap) {
-  const v = {};
-  for (const k of LANE_CODES) v[k] = lanes[k].map(ref => { const i = ISSUES.getIssue(ref); const [repo, n] = ref.split('#');
-    return { ref, repo, number: +n, title: i ? i.title : null, url: i ? i.url : `https://github.com/${repo}/issues/${n}`, milestone: i ? i.milestone : null, labels: i ? i.labels : [], flight: `${k} ${n}`, dispatchable: repo === REPO }; });
+// ETD (estimated time to enter TAKEOFF) for queued cards: auto pilot + free slot -> next auto departure (90 s apart);
+// airline holding for quota -> its resume time; full -> unknown (等待空位); MANUAL / lane auto off / CX -> 等你按 Takeoff
+function laneView(lanes, cap, settings) {
+  const v = {}; const qa = readJSON(ORDER_FILE, {}).queuedAt || {}; const now = Date.now();
+  for (const k of LANE_CODES) {
+    const c = (cap && cap.lanes[k]) || { running: 0, cap: 0 }; const manual = !settings || settings.mode !== 'AUTO' || !settings.auto[k] || laneCfg(k).manualOnly;
+    let free = Math.max(0, Math.min(c.cap - c.running, cap ? cap.globalCap - cap.total : 0)); let slot = 0;
+    v[k] = lanes[k].map(ref => { const i = ISSUES.getIssue(ref); const [repo, n] = ref.split('#'); const dispatchable = repo === REPO;
+      let etd = null, etdState;
+      if (!dispatchable) etdState = 'n/a';
+      else if (manual) etdState = 'manual';
+      else if (c.holding && c.until > now) { etd = c.until; etdState = 'quota'; }
+      else if (slot < free) { etd = Math.max(now + POLL_MS, lastAutoAt + 90e3) + slot * 90e3; slot++; etdState = 'auto'; }
+      else etdState = 'full';
+      return { ref, repo, number: +n, title: i ? i.title : null, url: i ? i.url : `https://github.com/${repo}/issues/${n}`, milestone: i ? i.milestone : null, labels: i ? i.labels : [], flight: `${k} ${n}`,
+        dispatchable, queuedAt: qa[ref] || null, etd, etdState }; });
+  }
   return v;
 }
 function autoPick(snap, lanes, settings) {
@@ -432,12 +450,13 @@ async function refresh() {
     snap.capacity = capacity(snap.strips);
     const queued = new Set(Object.values(lanes).flat());
     snap.park = ISSUES.park(excludeSets(lastTable), queued);
-    snap.lanes = laneView(lanes, snap.capacity);
+    snap.lanes = laneView(lanes, snap.capacity, settings);
     snap.settings = settings;
     snap.laneCfg = Object.fromEntries(LANE_CODES.map(k => { const c = laneCfg(k); return [k, { cap: c.cap, manualOnly: c.manualOnly, idleLabel: c.idleLabel, airline: c.airline, agent: c.agent }]; }));
     snap.dispatchRepo = REPO;
     const pick = autoPick(snap, lanes, settings);
     snap.autopilot = { mode: settings.mode, next: pick, note: autoNote };
+    try { snap.models = MODELS.view(CFG); } catch (e) { snap.models = { error: e.message }; }
     snapshot = snap;
     if (settings.mode === 'AUTO' && pick && !pick.blocked && Date.now() - lastAutoAt > 90e3) {
       lastAutoAt = Date.now();
@@ -486,7 +505,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname.startsWith('/api/')) {
       const bad = guard(req); if (bad) return send(res, 403, JSON.stringify({ error: bad }));
       const j = await body(req);
-      if (CFG.demo) { const r = require('./lib/demo').mutate(demoState, url.pathname, j); return send(res, 200, JSON.stringify(r)); }
+      if (CFG.demo) { const r = require('./lib/demo').mutate(demoState, url.pathname, j); refresh(); return send(res, 200, JSON.stringify(r)); }
       if (url.pathname === '/api/lanes') {
         const lanes = readLanes();
         for (const k of LANE_CODES) if (Array.isArray(j.lanes && j.lanes[k])) lanes[k] = [...new Set(j.lanes[k].filter(x => typeof x === 'string' && REF_RE.test(x)))].slice(0, 100);
@@ -498,6 +517,13 @@ const server = http.createServer(async (req, res) => {
         for (const k of LANE_CODES) if (j.auto && typeof j.auto[k] === 'boolean' && !laneCfg(k).manualOnly) cur.auto[k] = j.auto[k];
         writeSettings(cur); DISPATCH.dlog(DISPATCH.ctx(CFG), `SETTINGS mode=${cur.mode} auto=${JSON.stringify(cur.auto)}`); refresh();
         return send(res, 200, JSON.stringify(cur));
+      }
+      if (url.pathname === '/api/models') {   // per-airline (lane) or per-line model / effort; applies to the next round, never touches a running agent
+        if (CFG.demo) return send(res, 200, JSON.stringify(require('./lib/demo').mutate(demoState, '/api/models', j)));
+        const laneOf = line => { const a = airlineOf(line || ''); return a && a.code; };
+        if (!(LANE_CODES.includes(j.lane) || (typeof j.line === 'string' && lastTable[j.line]))) return send(res, 400, JSON.stringify({ error: 'bad lane/line' }));
+        const r = await MODELS.save(CFG, { lane: j.lane, line: j.lane ? null : j.line, model: j.model, effort: j.effort }, laneOf);
+        refresh(); return send(res, 200, JSON.stringify(r));
       }
       if (url.pathname === '/api/preview') {
         if (!REF_RE.test(j.ref || '') || !LANE_CODES.includes(j.lane)) return send(res, 400, JSON.stringify({ error: 'bad ref/lane' }));

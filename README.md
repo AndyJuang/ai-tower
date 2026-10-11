@@ -30,7 +30,8 @@ Agents are shown as airlines — **GK Grok Air**, **CL Claude Airways**, **CX Co
 ### Dispatch
 - Drag a PARK card (by its `≡` handle) into a lane; reorder within a lane; drag back to PARK to unqueue. 5 s undo. Keyboard: Space pick up · ↑↓ reorder · ←→ change lane · Space drop · Esc cancel.
 - **✈ Takeoff** opens a confirm popover (agent, issue, branch, base). On confirm the server: fetches the issue (`gh issue view`), creates a worktree on a new branch `feat/<milestone>-<issue>-<slug>` from the first existing `baseBranches` entry, writes the prompt from your template, adds the line to the runner's case table (backup + `bash -n` first, atomic rename), and launches the runner detached. The card moves to TAKEOFF once the agent process is seen. Every takeoff is logged to `<logsDir>/tower-dispatch.log`.
-- **MANUAL / AUTO PILOT** (header) plus a per-lane AUTO switch. Auto pilot departs the first card of each enabled lane when the airline has capacity (default GK 6, others 2, global 8) and is not holding for a usage limit. **CX (Codex) is manual-only** by default (`manualOnly`).
+- **MANUAL / AUTO PILOT** (header) plus a per-lane AUTO switch. Auto pilot departs the first card of each enabled lane when the airline has capacity (default GK 6, others 2, global 8) and is not holding for a usage limit. Only GK is AUTO ON by default; any lane can be locked to manual with `manualOnly`.
+- **⚙ Model / effort** chip in every lane header: pick the model and reasoning effort from the lists each CLI reports (`grok models`, `claude --help`, `~/.codex/models_cache.json`, `agy models`). Saved to `<logsDir>/tower-models.env`; a per-flight override lives in the card's 詳細 (`tower-models.d/<line>.env`). The runner re-reads them at the start of every round, so changes apply to the **next round** and never interrupt a running agent. The first save installs a small hook in your runner (backup + `bash -n`); `examples/runner.example.sh` already has it.
 
 ### Install
 Requirements: macOS or Linux, Node.js 18+, python3, git, [GitHub CLI](https://cli.github.com) (`gh auth login`).
@@ -53,6 +54,7 @@ cp examples/runner.example.sh <logsDir>/runner.sh
 | `issueRepos`, `dispatchRepo`, `baseBranches` | PARK sources; repo Takeoff may dispatch; base branch order |
 | `promptTemplate` | Markdown template with `{{issueTitle}}`, `{{issueBody}}`, `{{branch}}`, `{{pushRule}}`, `{{include:file}}` … |
 | `lanes.XX.cap / auto / manualOnly / idleLabel`, `globalCap` | capacity and auto-pilot rules |
+| `agentBins`, `modelCatalog` | optional CLI paths and a static model/effort list per lane (overrides discovery) |
 | `doneRegex`, `stopByNames`, `tzLabel`, `cutoffHour`, `launchPrefix` | progress "done" marker, who counts as an intentional stop, clock label, runner cutoff hour, launch prefix (default `nice -n 10` [+ `caffeinate -i` on macOS]) |
 
 Local state (`data/`: lane order, settings, issue cache, dispatched list) is gitignored. `titles.json` (optional) maps line/branch → friendly title.
@@ -61,7 +63,7 @@ Local state (`data/`: lane order, settings, issue cache, dispatched list) is git
 - Binds **127.0.0.1 only**; requests with a non-loopback `Host` are refused (DNS-rebinding guard).
 - Mutating endpoints (`/api/lanes`, `/api/settings`, `/api/preview`, `/api/takeoff`) need the **session token** embedded in the served page **and** a same-origin `Origin` header. The token is kept in `data/session-token` (gitignored, mode 600) so it survives restarts; an open page that hits a stale token re-reads it from `/api/token` (same-origin only) and retries once.
 - Read-only towards running jobs: it never kills or edits a running runner; the runner file is only appended to (with backup) on Takeoff.
-- Codex lane is manual-only by default. Background agents are told (prompt template) never to open GUI apps or browsers.
+- Lanes start AUTO OFF except GK; `manualOnly` locks a lane to manual Takeoff. Background agents are told (prompt template) never to open GUI apps or browsers.
 - No telemetry, no external calls except `gh` / `git` you already use.
 
 ### Limitations
@@ -88,7 +90,8 @@ AI Tower 是一個本機「塔台」：把背景跑的 AI 寫程式代理（Grok
 ### 派工
 - 抓 `≡` 把手把 PARK 卡拖進跑道；跑道內可調順序；拖回 PARK 取消排班；5 秒內可撤銷。鍵盤：空白鍵拿起、↑↓ 排序、←→ 換跑道、空白鍵放下、Esc 取消。
 - 按 **✈ Takeoff** 會先跳確認（agent、issue、分支、base）。確認後：抓 issue 內容、從 `baseBranches` 第一個存在的分支開新 worktree 與分支 `feat/<milestone>-<issue>-<slug>`、依範本寫 prompt、把該 line 安全地加入 runner 的 case 表（先備份、`bash -n` 檢查、原子替換）、背景啟動 runner。看到 agent 程序後卡片移到 TAKEOFF。每次起飛都記錄在 `<logsDir>/tower-dispatch.log`。
-- 上方 **MANUAL / AUTO PILOT** 總開關＋每條跑道 AUTO 開關。自動駕駛會在該航空公司有容量（預設 GK 6、其他 2、全域 8）且沒有因額度上限在等待時，讓跑道第一班起飛。**CX（Codex）預設只能手動**。
+- 上方 **MANUAL / AUTO PILOT** 總開關＋每條跑道 AUTO 開關。自動駕駛會在該航空公司有容量（預設 GK 6、其他 2、全域 8）且沒有因額度上限在等待時，讓跑道第一班起飛。預設只有 GK 開 AUTO；任何跑道都可用 `manualOnly` 鎖成只能手動。
+- 每條跑道標頭的 **⚙ 模型 · effort**：從各 CLI 自己回報的清單選模型與推理強度（`grok models`、`claude --help`、`~/.codex/models_cache.json`、`agy models`）。存到 `<logsDir>/tower-models.env`；單一航班可在卡片「詳細」覆寫（`tower-models.d/<line>.env`）。runner 每一輪開始都會重讀，所以**下一輪生效**，不會中斷正在跑的 agent。第一次儲存會在 runner 加入讀設定的 hook（先備份＋`bash -n`）；`examples/runner.example.sh` 已內建。
 
 ### 安裝
 需要 macOS 或 Linux、Node.js 18+、python3、git、[GitHub CLI](https://cli.github.com)（先 `gh auth login`）。
@@ -108,7 +111,7 @@ cp examples/runner.example.sh <logsDir>/runner.sh
 - 只綁 **127.0.0.1**；`Host` 不是本機的請求一律拒絕（防 DNS rebinding）。
 - 會改動狀態的 API 需要頁面內嵌的 **session token**，且 `Origin` 必須同源。token 存在 `data/session-token`（不進 git、權限 600），重啟後不變；已開著的頁面若遇到舊 token，會自動向 `/api/token`（限同源）重新取得並重試一次。
 - 對執行中的工作唯讀：不會砍或修改正在跑的 runner；只有 Takeoff 會在備份後新增 runner 條目。
-- Codex 跑道預設只能手動起飛；prompt 範本要求背景代理不得開任何 GUI 或瀏覽器。
+- 預設只有 GK 開 AUTO；`manualOnly` 可把跑道鎖成只能手動；prompt 範本要求背景代理不得開任何 GUI 或瀏覽器。
 - 沒有遙測；除了你本來就在用的 `gh`／`git` 之外不連外。
 
 ### 限制

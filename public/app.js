@@ -52,7 +52,7 @@
     $('#clock').innerHTML = flap(d.slice(11, 19), 'big');
     $('#clock-date').textContent = ((data && data.tzLabel) ? data.tzLabel + ' ' : '') + d.slice(0, 10);
     document.querySelectorAll('[data-since]').forEach(el => { el.innerHTML = flap(dur(now() - Number(el.dataset.since))); });
-    document.querySelectorAll('[data-until]').forEach(el => { const ms = Number(el.dataset.until) - now(); el.textContent = !el.dataset.until ? '—' : ms > 0 ? dur(ms).slice(ms >= 3600e3 ? 0 : 3) + ' 後' : '即將'; });
+    document.querySelectorAll('[data-cd]').forEach(el => { el.innerHTML = flap(cd(Number(el.dataset.cd))); const l = el.previousElementSibling; if (l && Number(el.dataset.cd) <= now() && !l.dataset.done) { l.dataset.done = 1; l.textContent = '即將起飛'; } });
   }
   setInterval(tick, 1000);
 
@@ -76,16 +76,23 @@
   function fin(key, size) { const f = FIN[key] || { body: '#666', edge: '#444', mark: '' };
     return `<svg class="fin" width="${size}" height="${size}" viewBox="0 0 28 28" aria-hidden="true"><path d="M5 26 L11 3 L17 3 L25 26 Z" fill="${f.body}" stroke="${f.edge}" stroke-width="1.4" stroke-linejoin="round"/>${f.mark}</svg>`; }
   const CHIP = {
-    TAKEOFF: s => `<span class="pulse"></span>TAKEOFF`, TAXI: s => `TAXI${s.nextAt ? ' · 下一輪 ' + hm(s.nextAt) : ''}`,
+    TAKEOFF: s => `<span class="pulse"></span>TAKEOFF`, TAXI: s => `休息中${s.nextAt ? ' · 下一輪 ' + hm(s.nextAt) : ''}`,
     HOLDING: s => `HOLDING until ${hm(s.resumeAt)}`, SCHEDULED: s => s.etd ? `SCHEDULED · ${esc(s.etd)}` : 'SCHEDULED',
     LANDED: s => 'GOOD DAY ✓', STOPPED: s => 'STOPPED', DIVERTED: s => '⚠ DIVERTED',
   };
+  function cd(t) { if (!t) return '--:--'; const ms = Math.max(0, t - now()); const d = dur(ms); return ms >= 3600e3 ? d : d.slice(3); }   // countdown mm:ss (h:mm:ss ≥ 1 h)
+  function big(label, inner, attrs) { return `<span class="tbig"><small class="tl">${label}</small><b class="t"${attrs || ''}>${inner}</b></span>`; }
   function timeBlock(s) {
-    if (s.status === 'TAKEOFF') return `<b class="t" data-since="${s.since || s.std}">${flap(dur(now() - (s.since || s.std)))}</b><span>${s.attempt > 1 ? `第 ${s.attempt} 輪 · 首飛 ${hm(s.std)}` : `已飛 · 起飛 ${hm(s.std)}`}</span>`;
-    if (s.status === 'TAXI' || s.status === 'HOLDING') return `<b class="t">${flap(hm(s.std))}</b><span>出發 · ${s.status === 'HOLDING' ? '等額度 ' : '下一輪 '}<span data-until="${s.status === 'HOLDING' ? s.resumeAt : s.nextAt || ''}"></span></span>`;
-    if (s.status === 'SCHEDULED') return `<b class="t">${flap(s.etd || '--:--')}</b><span>預定出發</span>`;
-    const fl = s.flightMin != null ? ` · 航程 ${Math.floor(s.flightMin / 60)}:${pad(s.flightMin % 60)}` : '';
-    return `<b class="t">${flap(hm(s.endedAt))}</b><span>${s.status === 'LANDED' ? '落地' : s.status === 'STOPPED' ? '停止' : '異常結束'}${fl}</span>`;
+    const first = s.std ? `首飛 ${hm(s.std)}` : '';
+    if (s.status === 'TAKEOFF') return big('航程', flap(dur(now() - (s.since || s.std))), ` data-since="${s.since || s.std}"`) + `<span>${s.attempt > 1 ? `第 ${s.attempt} 輪 · ` : ''}起飛 ${hm(s.since || s.std)}${s.attempt > 1 ? ' · ' + first : ''}</span>`;
+    // READY: big = ETD (estimated time to enter TAKEOFF); small = 排入 (time it entered READY)
+    const inR = s.readyAt ? `排入 ${hm(s.readyAt)}` : first;
+    if (s.status === 'TAXI') return big('預計起飛', flap(s.nextAt ? hm(s.nextAt) : '--:--')) + `<span>休息中${s.attempt ? ` · 已飛 ${s.attempt} 輪` : ''}<br>${inR}</span>`;
+    if (s.status === 'HOLDING') return big('預計起飛', flap(s.resumeAt ? hm(s.resumeAt) : '--:--')) + `<span>等額度恢復<br>${inR}</span>`;
+    if (s.status === 'SCHEDULED') return big('預定', flap(s.etd || '--:--')) + `<span>預定出發</span>`;
+    const fl = s.flightMin != null ? `航程 ${Math.floor(s.flightMin / 60)}:${pad(s.flightMin % 60)}` : '';
+    const lab = s.status === 'LANDED' ? '落地' : s.status === 'STOPPED' ? '停止' : '結束';
+    return big(lab, flap(hm(s.endedAt))) + `<span>${[s.status === 'DIVERTED' ? '異常結束' : '', fl].filter(Boolean).join(' · ')}${first ? '<br>' + first : ''}</span>`;
   }
   function detail(s) {
     const c = s.lastCommit, rows = []; const add = (k, v) => { if (v != null && v !== '') rows.push(`<dt>${k}</dt><dd>${v}</dd>`); };
@@ -94,6 +101,8 @@
     add('進度', esc(s.progress && s.progress.status)); if (s.std) add('首次出發', hm(s.std)); if (s.attempt) add('回合', s.attempt);
     if (s.agentPid || s.runnerPid) add('PID', `agent ${s.agentPid || '—'} · runner ${s.runnerPid || '—'}`);
     if (c) add('最新 commit', `<code>${esc(c.hash)}</code> ${esc(ago(c.time))}<br>${esc(c.subject)}`);
+    const ov = data.models && data.models.overrides && data.models.overrides[s.id];
+    if (s.status !== 'LANDED' && s.status !== 'STOPPED' && s.status !== 'DIVERTED' && data.models && data.models.lanes) add('模型', `${ov ? esc([ov.model, ov.effort].filter(Boolean).join(' · ') || '—') + ' <small>(此航班覆寫)</small>' : '<small>跟隨航空公司設定</small>'} <button type="button" class="mdl-line" data-line="${esc(s.id)}" data-lane="${esc(CODE[s.airline.key] || '')}">⚙ 覆寫</button>`);
     if (s.reason) add('結束原因', esc(s.reason)); else if (s.lastEvent) add('最後事件', `<code>${esc(String(s.lastEvent).slice(0, 160))}</code>`);
     return `<dl>${rows.join('')}</dl>`;
   }
@@ -109,6 +118,11 @@
         <div class="row"><span class="chip st-${s.status}">${CHIP[s.status](s)}</span>${iss}${tags}<button type="button" class="expand" aria-expanded="${open.has(s.id)}">${open.has(s.id) ? '收起 ▴' : '詳細 ▾'}</button></div>
       </div><div class="more">${detail(s)}</div></li>`;
   }
+  function etdBlock(i) {
+    const st = i.etdState, lab = { auto: '預計起飛', quota: '預計起飛', full: '等待空位', manual: '等你按 Takeoff', 'n/a': '無法派工' }[st] || '等待空位';
+    const sub = st === 'quota' ? '等額度恢復' : st === 'auto' ? 'AUTO PILOT' : st === 'full' ? '滿載中' : st === 'manual' ? 'MANUAL' : '';
+    return big(lab, flap(i.etd ? hm(i.etd) : '--:--')) + `<span>${sub ? sub + '<br>' : ''}排入 ${i.queuedAt ? hm(i.queuedAt) : hm(now())}</span>`;
+  }
   function qitemHTML(i, lane) {
     const other = data && i.repo !== data.dispatchRepo;
     const ms = i.milestone ? `<span class="ms">${esc(i.milestone)}</span>` : '<span class="ms none">no milestone</span>';
@@ -118,6 +132,7 @@
         <div class="flt">${lane ? fin(air, 20) + `<b class="fno">${esc(lane)} ${esc(i.number)}</b>` : `<b class="fno park">#${esc(i.number)}</b>`}${ms}${other ? `<span class="repo">${esc(i.repo.split('/')[1])}</span>` : ''}
           <a class="iss" href="${esc(i.url)}" target="_blank" rel="noopener">#${esc(i.number)} ↗</a></div>
         <div class="ttl">${esc(i.title || i.ref)}</div>
+        ${lane ? `<div class="time">${etdBlock(i)}</div>` : ''}
       </div>
       ${lane ? `<div class="tk"><button type="button" class="takeoff-btn" ${i.dispatchable === false ? 'disabled title="POC: only the dispatch repo can take off"' : ''}>✈ Takeoff</button></div>` : ''}
       <button type="button" class="handle" aria-label="移動 #${esc(i.number)}：空白鍵拿起、上下鍵排序、左右鍵換跑道、空白鍵放下" aria-pressed="false" title="拖曳">≡</button></li>`;
@@ -148,7 +163,7 @@
         : `<button type="button" class="auto-sw ${set.auto[k] ? 'on' : ''}" data-lane="${k}" aria-pressed="${!!set.auto[k]}">AUTO ${set.auto[k] ? 'ON' : 'OFF'}</button>`;
       return `<section class="lane a-${KEY[k]}" data-lane="${k}">
         <header>${fin(KEY[k], 22)}<b class="fno">${k}</b><span class="aname">${esc(cfg.airline || '')}</span>
-          <span class="capb ${c.running >= c.cap ? 'full' : ''}${c.holding ? ' hold' : ''}" title="running runners / cap">${c.running}/${c.cap}${c.holding ? ' · HOLD ' + hm(c.until) : ''}</span>${autoBtn}</header>
+          ${mdlChip(k)}<span class="capb ${c.running >= c.cap ? 'full' : ''}${c.holding ? ' hold' : ''}" title="running runners / cap">${c.running}/${c.cap}${c.holding ? ' · HOLD ' + hm(c.until) : ''}</span>${autoBtn}</header>
         ${active.length ? `<ol class="lane-active">${active.map(stripHTML).join('')}</ol>` : ''}
         <ol class="rack lane-rack" data-drop="${k}" data-empty="拖 PARK 卡片到這裡排班">${items.map(i => qitemHTML(i, k)).join('')}</ol></section>`;
     }).join('');
@@ -169,14 +184,14 @@
     // header: mode, airlines, autopilot hint
     $('#mode').querySelectorAll('button').forEach(b => { const on = b.dataset.mode === set.mode; b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); });
     $('#airlines').innerHTML = LANES.map(k => {
-      const mine = strips.filter(s => CODE[s.airline.key] === k); const fly = mine.filter(s => s.status === 'TAKEOFF').length;
+      const mine = strips.filter(s => CODE[s.airline.key] === k); const fly = mine.filter(s => s.status === 'TAKEOFF').length; const rest = mine.filter(s => s.status === 'TAXI' || s.status === 'HOLDING').length;
       const queued = ((data.lanes && data.lanes[k]) || []).length; const cfg = lc[k] || {};
-      const txt = fly ? `<span class="n">${fly}</span> 飛行中` : (cfg.manualOnly ? esc(cfg.idleLabel || 'manual only') + ' · <span class="n">0</span>' : '閒置 · <span class="n">0</span>');
+      const txt = (fly || rest) ? `<span class="n">${fly}</span> 飛行中${rest ? ` · <span class="n">${rest}</span> 休息中` : ''}` : (cfg.manualOnly ? esc(cfg.idleLabel || 'manual only') + ' · <span class="n">0</span>' : '閒置 · <span class="n">0</span>');
       return `<span class="airline ${fly ? 'busy' : ''}">${fin(KEY[k], 20)}<span class="code">${k}</span><b>${esc(cfg.airline || k)}</b> · ${txt}${queued ? ` · ${queued} 排班` : ''}</span>`;
     }).join('');
     const ap = data.autopilot || {}; const nx = ap.next;
     $('#ap-hint').innerHTML = set.mode !== 'AUTO' ? 'MANUAL — 在 READY 按 ✈ Takeoff 起飛'
-      : !nx ? 'AUTO PILOT · 沒有可自動起飛的排班（CX 永遠手動）'
+      : !nx ? 'AUTO PILOT · 沒有可自動起飛的排班'
       : nx.blocked ? `AUTO PILOT · 下一班 <b>${esc(nx.flight)}</b> 等待：${esc(nx.blocked)}` : `AUTO PILOT · 下一班 <b>${esc(nx.flight)}</b> 在 ${hm(nx.eta)}`;
     if (ap.note) $('#ap-hint').innerHTML += ` <small>· ${esc(ap.note)}</small>`;
     if (focusRef) { const h = document.querySelector(`.qitem[data-ref="${CSS.escape(focusRef)}"] .handle`); h && h.focus(); }
@@ -195,11 +210,47 @@
     const sw = e.target.closest('.auto-sw');
     if (sw) { const k = sw.dataset.lane; const cur = data.settings.auto[k]; try { await post('/api/settings', { auto: { [k]: !cur } }); load(); } catch (er) { toast(er.message, 'err'); } return; }
     const tb = e.target.closest('.takeoff-btn'); if (tb) { openConfirm(tb); return; }
+    const mb = e.target.closest('.mdl, .mdl-line'); if (mb) { openModels(mb); return; }
     if (e.target.closest('.handle, a, button, .pop')) { if (!e.target.closest('.expand')) return; }
     const li = e.target.closest('.strip'); if (!li) return;
     const id = li.dataset.id; open.has(id) ? open.delete(id) : open.add(id); li.classList.toggle('open', open.has(id));
     const b = li.querySelector('.expand'); if (b) { b.setAttribute('aria-expanded', open.has(id)); b.textContent = open.has(id) ? '收起 ▴' : '詳細 ▾'; }
   });
+
+  // ---------- model / effort popover ----------
+  function mdlText(m) { return [m.model || 'CLI 預設', m.effort].filter(Boolean).join(' · '); }
+  function mdlChip(k) {
+    const m = data.models && data.models.lanes && data.models.lanes[k]; if (!m) return '';
+    return `<button type="button" class="mdl ${m.effective.source === 'tower' ? 'set' : ''}" data-lane="${k}" title="模型與推理強度（下一輪生效）">⚙ ${esc(mdlText(m.effective))}</button>`;
+  }
+  function openModels(btn) {
+    const k = btn.dataset.lane, line = btn.dataset.line || null; const m = data.models.lanes[k]; if (!m) return;
+    const cur = line ? (data.models.overrides[line] || {}) : m.set; const cat = m.catalog;
+    closePop(); busy = true;
+    const pop = document.createElement('div'); pop.className = 'pop'; pop.setAttribute('role', 'dialog');
+    const effOpts = model => { const l = (cat.perModel && model && cat.perModel[model]) || cat.efforts || []; return l; };
+    const base = line ? `航空公司設定（${esc(mdlText(m.effective))}）` : `runner／CLI 預設（${esc(mdlText({ model: m.runnerDefault.model || (m.effective.source !== 'tower' ? m.effective.model : null), effort: m.runnerDefault.effort || (m.effective.source !== 'tower' ? m.effective.effort : null) }))}）`;
+    const draw = () => {
+      const model = pop.querySelector('#m-model') ? pop.querySelector('#m-model').value : cur.model || '';
+      const effort = pop.querySelector('#m-eff') ? pop.querySelector('#m-eff').value : cur.effort || '';
+      const effs = effOpts(model || m.effective.model);
+      pop.innerHTML = `<div class="pop-title">${fin(KEY[k], 22)} ${line ? esc(line) + ' 模型覆寫' : esc(k) + ' ' + esc((data.laneCfg[k] || {}).airline || '') + ' 模型'}</div>
+        <label class="fld">模型<select id="m-model"><option value="">${base}</option>${cat.models.map(x => `<option value="${esc(x)}"${x === model ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select></label>
+        <label class="fld">推理強度 effort<select id="m-eff"><option value="">預設</option>${effs.map(x => `<option value="${esc(x)}"${x === effort ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select></label>
+        ${cat.note ? `<p class="hint">${esc(cat.note)}</p>` : ''}${cat.error ? `<p class="warn">⚠ 讀不到 CLI 模型清單：${esc(cat.error)}</p>` : ''}
+        <p class="hint">⏱ 下一輪生效 — 正在跑的 agent 不會被中斷。${data.models.hook ? '' : '<br>第一次儲存會在 runner 腳本加入讀設定的 hook（先備份、bash -n 檢查）；在那之前就已啟動的 runner 要等下次重新啟動才會套用。'}</p>
+        <div class="pop-actions"><button type="button" class="cancel">取消</button><button type="button" class="go save">儲存</button></div>`;
+      pop.querySelector('#m-model').onchange = draw;
+      pop.querySelector('.cancel').onclick = closePop;
+      pop.querySelector('.save').onclick = async () => {
+        const body = { model: pop.querySelector('#m-model').value || null, effort: pop.querySelector('#m-eff').value || null }; if (line) body.line = line; else body.lane = k;
+        try { await post('/api/models', body); closePop(); toast(`⚙ ${line || k} 模型設定已儲存：${mdlText({ model: body.model || '預設', effort: body.effort })} — 下一輪生效`); load(); }
+        catch (er) { pop.querySelector('.pop-actions').insertAdjacentHTML('beforebegin', `<p class="warn err">✖ ${esc(er.message)}</p>`); }
+      };
+      place(pop, btn);
+    };
+    document.body.appendChild(pop); draw(); pop.querySelector('#m-model').focus();
+  }
 
   // ---------- takeoff confirm popover ----------
   async function openConfirm(btn) {
@@ -240,7 +291,7 @@
     const inLanes = new Set(Object.values(after).flat()); data.park.issues = Object.values(byRef).filter(i => !inLanes.has(i.ref)).sort((a, b) => (a.milestone || '~').localeCompare(b.milestone || '~', undefined, { numeric: true }) || a.number - b.number);
     render(); showUndo(before);
     announce(to === 'park' ? `#${ref.split('#')[1]} 移回 PARK` : `#${ref.split('#')[1]} 排入 ${to} 第 ${after[to].indexOf(ref) + 1} 位`);
-    try { await post('/api/lanes', { lanes: after }); } catch (e) { toast('儲存失敗：' + e.message, 'err'); }
+    try { await post('/api/lanes', { lanes: after }); load(); } catch (e) { toast('儲存失敗：' + e.message, 'err'); }
   }
   function showUndo(before) {
     undoState = before; const u = $('#undo'); u.hidden = false;

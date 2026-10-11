@@ -173,3 +173,23 @@ body.dragging{cursor:grabbing;user-select:none}
 .rack>*,.lane-active>*,.lanes>*{flex-shrink:0}
 .strip,.qitem,.placeholder{flex:0 0 auto}
 .bay{overflow-x:clip}   /* sub-pixel header bleed in WebKit; clip never creates a scrollbar */
+/* v0.1.4 — every big split-flap time carries a tiny label */
+.tbig{display:inline-flex;flex-direction:column;align-items:flex-start;gap:2px;flex:none}
+.tl{font:800 10.5px var(--board);letter-spacing:.12em;color:var(--ink3);text-transform:uppercase;line-height:1}
+.time{align-items:flex-end}
+.time>span:not(.tbig){line-height:1.35;padding-bottom:1px}
+.s-TAXI .tl,.s-HOLDING .tl{color:#24508f}.s-HOLDING .tl{color:#8a5a00}.s-TAKEOFF .tl{color:#17633a}
+.qitem .time{margin-top:6px}.qitem .time .t{font-size:20px}
+.qitem .tl{white-space:nowrap}
+/* v0.1.5 — model / effort chip + popover */
+.mdl{font:700 11.5px var(--board);color:#cfd6dd;background:#1b2026;border:1px solid #4d5763;border-radius:5px;padding:3px 8px;min-height:28px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:46%;margin-left:auto}
+.mdl.set{border-color:var(--amber);color:#ffd48a}
+.mdl:hover{background:#262c33}
+.lane>header{flex-wrap:wrap;row-gap:6px}
+.lane>header .capb{margin-left:0}
+.fld{display:flex;flex-direction:column;gap:4px;margin:6px 0;font:700 12px var(--sans);color:var(--ink2)}
+.fld select{font:600 13.5px var(--board);padding:8px;border-radius:6px;border:1px solid #8c805f;background:#fffaf0;color:var(--ink);min-height:40px}
+.pop .hint{margin:6px 0;font-size:12.5px;color:var(--ink2)}
+.mdl-line{font:700 11.5px var(--sans);border:1px solid #8c805f;background:#fffaf0;border-radius:4px;padding:2px 7px;cursor:pointer;margin-left:6px}
+.lane>header .mdl{order:9;flex:1 1 100%;max-width:100%;margin-left:0;text-align:left}
+.lane>header .capb{margin-left:auto}

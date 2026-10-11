@@ -34,9 +34,7 @@
     },
     "CX": {
       "cap": 2,
-      "auto": false,
-      "manualOnly": true,
-      "idleLabel": "manual only"
+      "auto": false
     },
     "AG": {
       "cap": 2,
