@@ -81,6 +81,17 @@ const EXTRA = Object.fromEntries((CFG.extraRunners || []).map(x => [x.line, x]))
 const sub = (s, line) => s.replace(/\{line\}/g, line).replace(/\{baseDir\}/g, BASE).replace(/^~(?=\/)/, os.homedir());
 function logFor(line) { return EXTRA[line] ? path.join(L, EXTRA[line].log) : path.join(L, sub(CFG.logPattern, line)); }
 function worktreeFor(line) { const t = typeof lastTable === 'object' && lastTable && lastTable[line]; if (t && t.wtx) return t.wtx; return EXTRA[line] ? sub(EXTRA[line].worktree, line) : sub(CFG.worktreePattern, line); }
+function deriveTargetPrefix(cfg) {
+  if (cfg.worktreePattern) {
+    const base = path.basename(cfg.worktreePattern);
+    const idx = base.indexOf('{line}');
+    if (idx > 0) return base.slice(0, idx);
+  }
+  if (cfg.mainCheckout) {
+    return path.basename(cfg.mainCheckout) + '-wt-';
+  }
+  return '-wt-';
+}
 const AIRLINES = {
   grok: { key: 'grok', code: 'GK', name: 'Grok Air', agent: 'Grok CLI' },
   claude: { key: 'claude', code: 'CL', name: 'Claude Airways', agent: 'Claude Code' },
@@ -325,6 +336,7 @@ async function buildSnapshot() {
   for (const o of orphans) {
     const cm = o.command.match(/\s(?:-C|--cd)\s+(\S+)/);
     const wt = (cm && cm[1]) || await cwdOf(o.pid);
+    o.wt = wt;
     strips.push({ id: 'codex-pid' + o.pid, callsign: 'codex exec ' + o.pid, flight: 'CX ' + String(o.pid).slice(-3), airline: airlineOf('codex-'), project: wt ? path.basename(wt) : '?',
       wt, branch: wt ? await gitBranch(wt) : null, issues: [], progress: {}, std: o.started, since: o.started, attempt: 1,
       runnerPid: null, agentPid: o.pid, lastEvent: 'stand-alone codex exec (no tower runner)', tags: ['手動'], status: 'TAKEOFF', bay: 'takeoff',
@@ -381,7 +393,40 @@ async function buildSnapshot() {
   }
   for (const [k, v] of Object.entries(quota)) { v.untilHM = fmtHM(v.until);
     v.state = v.until ? 'quota until ' + v.untilHM : v.flying ? 'flying' : (k === 'codex' ? ((CFG.lanes || {}).CX || {}).idleLabel || 'manual only' : 'idle'); }
-  return { generatedAt: now, tzOffsetMin: -new Date(now).getTimezoneOffset(), tzLabel: CFG.tzLabel || '', pollMs: POLL_MS, queues: queues.map(q => ({ script: q.script, alive: q.alive, pid: q.pid })), quota, strips };
+  const cwds = new Map();
+  for (const o of grokOrphans || []) if (o.wt) cwds.set(o.pid, o.wt);
+  for (const o of orphans || []) if (o.wt) cwds.set(o.pid, o.wt);
+  for (const p of procs) {
+    if (!cwds.has(p.pid) && PROCESSES.isClaudeProc(p.command)) {
+      const wt = await cwdOf(p.pid);
+      if (wt) cwds.set(p.pid, wt);
+    }
+  }
+  const targetPrefix = deriveTargetPrefix(CFG);
+  const desktopAgent = (CFG.starbase && CFG.starbase.desktopAgent) || CFG.starbaseDesktopAgent || STARBASE.findDesktopAgent(CFG);
+  let wozTasks = [];
+  try {
+    wozTasks = PROCESSES.detectWozJobs(procs, {
+      cwds,
+      issueCache,
+      titles: readTitles(),
+      repo: REPO,
+      targetPrefix,
+      agent: desktopAgent,
+      now
+    });
+    for (const t of wozTasks) {
+      if (t.issue) wantIssue(String(t.issue).replace(/^#/, ''));
+      if (Array.isArray(t.issues)) {
+        for (const n of t.issues) wantIssue(String(n).replace(/^#/, ''));
+      }
+    }
+  } catch (e) {
+    console.error('[starbase] detectWozJobs error:', e);
+  }
+  let starbaseData;
+  try { starbaseData = STARBASE.load(CFG, { wozTasks, desktopAgent, now }); } catch (e) { starbaseData = { generatedAt: Date.now(), hideHours: CFG.goodDayHideHours ?? 6, agents: [], error: String(e && e.message || e) }; }
+  return { generatedAt: now, tzOffsetMin: -new Date(now).getTimezoneOffset(), tzLabel: CFG.tzLabel || '', pollMs: POLL_MS, queues: queues.map(q => ({ script: q.script, alive: q.alive, pid: q.pid })), quota, strips, starbase: starbaseData };
 }
 
 // ---------- v3: lanes, park, settings, auto pilot ----------
@@ -496,7 +541,7 @@ async function refresh() {
     const pick = autoPick(snap, lanes, settings);
     snap.autopilot = { mode: settings.mode, next: pick, note: autoNote };
     try { snap.models = MODELS.view(CFG); } catch (e) { snap.models = { error: e.message }; }
-    try { snap.starbase = STARBASE.load(CFG); } catch (e) { snap.starbase = { generatedAt: Date.now(), hideHours: CFG.goodDayHideHours ?? 6, agents: [], error: String(e && e.message || e) }; }
+    if (!snap.starbase) { try { snap.starbase = STARBASE.load(CFG); } catch (e) { snap.starbase = { generatedAt: Date.now(), hideHours: CFG.goodDayHideHours ?? 6, agents: [], error: String(e && e.message || e) }; } }
     snapshot = snap;
     if (settings.mode === 'AUTO' && pick && Date.now() - lastAutoAt > 90e3) {
       const liveCap = capacity(snap.strips);
@@ -551,8 +596,9 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/token') return tokenOk(req) ? send(res, 200, JSON.stringify({ token: TOKEN })) : send(res, 403, JSON.stringify({ error: 'bad origin' }));
     if (req.method === 'GET' && url.pathname === '/api/strips') { if (!snapshot.generatedAt) await refresh(); return send(res, 200, JSON.stringify(snapshot)); }
     if (req.method === 'GET' && url.pathname === '/api/starbase') {
+      if (!snapshot.generatedAt) await refresh();
       let body;
-      try { body = CFG.demo ? require('./lib/demo').starbase() : STARBASE.load(CFG); }
+      try { body = CFG.demo ? require('./lib/demo').starbase() : (snapshot.starbase || STARBASE.load(CFG)); }
       catch (e) { body = { generatedAt: Date.now(), hideHours: CFG.goodDayHideHours ?? 6, agents: [], error: String(e && e.message || e) }; }
       return send(res, 200, JSON.stringify(body));
     }
@@ -619,8 +665,21 @@ const server = http.createServer(async (req, res) => {
   if (!f.startsWith(path.join(ROOT, 'public') + path.sep)) return send(res, 403, 'forbidden', 'text/plain');
   fs.readFile(f, (err, data) => {
     if (err) return send(res, 404, 'not found', 'text/plain');
-    if (f.endsWith('index.html')) data = Buffer.from(data.toString('utf8').replace('__TOWER_TOKEN__', TOKEN).replace('__TOWER_DEMO__', CFG.demo ? '1' : ''));
-    const cache = p.startsWith('/starbase/') ? 'public, max-age=86400' : 'no-store';
+    if (f.endsWith('index.html')) {
+      const hashes = STARBASE.starbaseHashes(ROOT);
+      data = Buffer.from(data.toString('utf8')
+        .replace('__TOWER_TOKEN__', TOKEN)
+        .replace('__TOWER_DEMO__', CFG.demo ? '1' : '')
+        .replace('__STARBASE_HASH__', hashes.asset));
+    }
+    if (f.endsWith('player.html')) {
+      const hashes = STARBASE.starbaseHashes(ROOT);
+      let html = data.toString('utf8');
+      html = html.replace(/bridge\.js(?:\?v=[^"']*)?/, `bridge.js?v=${hashes.bridge}`);
+      html = html.replace(/starbase\.js(?:\?v=[^"']*)?/, `starbase.js?v=${hashes.bundle}`);
+      data = Buffer.from(html);
+    }
+    const cache = (p.startsWith('/starbase/') && !f.endsWith('.html')) ? 'public, max-age=86400' : 'no-store';
     send(res, 200, data, MIME[path.extname(f)] || 'application/octet-stream', cache);
   });
 });

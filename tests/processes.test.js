@@ -136,7 +136,7 @@ check('isLiveCap: TAKEOFF yes, GOOD DAY no', () => {
 check('stand-alone grok job under a wrapper → grokOrphan with wt line + trailing issues', () => {
   const wt = '/x/proj-wt-grok-v9-i11';
   const procs = [proc(300, 1, `/bin/bash /x/_logs/v9/run.sh ${wt} 11 12`), proc(301, 300, 'grok --always-approve --prompt-file /x/_logs/v9/p-11.md --debug-file /x/d.log'),
-    proc(302, 1, '/Users/a/.grok/bin/grok')];
+    proc(302, 1, '/home/a/.grok/bin/grok')];
   const { runners, orphans, grokOrphans } = P.mapProcesses(procs, OPTS);
   assert.equal(Object.keys(runners).length, 0); assert.equal(orphans.length, 0);
   assert.equal(grokOrphans.length, 1, 'interactive bare grok ignored');
@@ -151,6 +151,106 @@ check('grok job: issues fall back to worktree name; tower-owned grok is not an o
   const { runners, grokOrphans } = P.mapProcesses(procs, OPTS);
   assert.ok(runners['grok-v9-x'].agent);
   assert.equal(grokOrphans.length, 1); assert.deepEqual(grokOrphans[0].issues, ['#21']);
+});
+
+check('detectWozJobs: manual GK job attributes to 沃茲 with issue title from issueCache', () => {
+  const wt = '/tmp/test-app-wt-grok-v9-i102';
+  const procs = [
+    proc(600, 1, `/bin/bash /x/run.sh ${wt} 102`),
+    proc(601, 600, 'grok --always-approve --prompt-file /x/p.md')
+  ];
+  const issueCache = {
+    '102': { title: 'feat(starbase): 修復沃茲任務顯示 (Refs #102)' }
+  };
+  const tasks = P.detectWozJobs(procs, { issueCache, repo: 'test-org/test-app', targetPrefix: 'test-app-wt-' });
+  assert.equal(tasks.length, 1);
+  const t = tasks[0];
+  assert.equal(t.agent, '沃茲');
+  assert.equal(t.status, 'in_progress');
+  assert.equal(t.statusZh, '進行中');
+  assert.equal(t.task, '修復沃茲任務顯示');
+  assert.equal(t.link, 'https://github.com/test-org/test-app/issues/102');
+  assert.equal(t.note, 'Grok 實作中');
+});
+
+check('detectWozJobs: multiple issues on one job produce individual tasks with titles and links', () => {
+  const wt = '/tmp/test-app-wt-grok-v9-i101-i102';
+  const procs = [
+    proc(610, 1, `/bin/bash /x/run.sh ${wt} 101 102`),
+    proc(611, 610, 'grok --always-approve --prompt-file /x/p.md')
+  ];
+  const issueCache = {
+    '101': { title: 'feat(core): 核心效能改善 (Refs #101)' },
+    '102': { title: 'feat(starbase): 修復沃茲任務顯示 (Refs #102)' }
+  };
+  const tasks = P.detectWozJobs(procs, { issueCache, repo: 'test-org/test-app', targetPrefix: 'test-app-wt-' });
+  assert.equal(tasks.length, 2);
+  assert.equal(tasks[0].task, '核心效能改善');
+  assert.equal(tasks[0].link, 'https://github.com/test-org/test-app/issues/101');
+  assert.deepEqual(tasks[0].issues, ['101']);
+  assert.equal(tasks[1].task, '修復沃茲任務顯示');
+  assert.equal(tasks[1].link, 'https://github.com/test-org/test-app/issues/102');
+  assert.deepEqual(tasks[1].issues, ['102']);
+});
+
+check('detectWozJobs: stand-alone claude under targetPrefix derives issue from worktree', () => {
+  const wt = '/tmp/test-app-wt-claude-v2-i45';
+  const procs = [
+    proc(700, 1, `/opt/bin/claude -p "do work"`)
+  ];
+  const cwds = { 700: wt };
+  const titles = { '45': '大字報：情境標籤修復' };
+  const tasks = P.detectWozJobs(procs, { cwds, titles, repo: 'test-org/test-app', targetPrefix: 'test-app-wt-' });
+  assert.equal(tasks.length, 1);
+  const t = tasks[0];
+  assert.equal(t.agent, '沃茲');
+  assert.equal(t.task, '大字報：情境標籤修復');
+  assert.equal(t.note, 'Claude 實作中');
+  assert.equal(t.link, 'https://github.com/test-org/test-app/issues/45');
+});
+
+check('detectWozJobs: stand-alone codex under targetPrefix derives issue from command/cwd', () => {
+  const wt = '/tmp/test-app-wt-codex-v5-i88';
+  const procs = [
+    proc(800, 1, `codex exec -C ${wt}`)
+  ];
+  const tasks = P.detectWozJobs(procs, { repo: 'test-org/test-app', targetPrefix: 'test-app-wt-' });
+  assert.equal(tasks.length, 1);
+  const t = tasks[0];
+  assert.equal(t.agent, '沃茲');
+  assert.equal(t.task, 'Issue #88');
+  assert.equal(t.note, 'Codex 實作中');
+  assert.equal(t.link, 'https://github.com/test-org/test-app/issues/88');
+});
+
+check('detectWozJobs: supports configurable agent name', () => {
+  const wt = '/tmp/custom-app-wt-grok-v1-i99';
+  const procs = [
+    proc(620, 1, `/bin/bash /x/run.sh ${wt} 99`),
+    proc(621, 620, 'grok --always-approve --prompt-file /x/p.md')
+  ];
+  const tasks = P.detectWozJobs(procs, {
+    agent: '自訂桌面Agent',
+    targetPrefix: 'custom-app-wt-',
+    repo: 'my-org/custom-app'
+  });
+  assert.equal(tasks.length, 1);
+  assert.equal(tasks[0].agent, '自訂桌面Agent');
+  assert.equal(tasks[0].task, 'Issue #99');
+});
+
+check('detectWozJobs: ignore claude/codex in other repos and tower-owned processes', () => {
+  const procs = [
+    // other repo
+    proc(900, 1, 'codex exec -C /home/test/other-app-wt-1'),
+    proc(901, 1, 'claude -p "hello"'),
+    // tower-owned
+    proc(1000, 1, `bash /tmp/logs/${SCRIPT} grok-v9-x`),
+    proc(1001, 1000, 'grok -p run')
+  ];
+  const cwds = { 901: '/home/test/other-app-wt-2' };
+  const tasks = P.detectWozJobs(procs, { cwds, runnerScript: SCRIPT, targetPrefix: 'test-app-wt-' });
+  assert.equal(tasks.length, 0, 'none attributed to 沃茲');
 });
 
 if (failed) { console.error('FAIL'); process.exit(1); }

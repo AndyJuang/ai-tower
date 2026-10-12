@@ -1,4 +1,4 @@
-# AI Tower ✈ `v0.3.1`
+# AI Tower ✈ `v0.3.2`
 
 **A local control tower for background AI coding agents** — shows every agent job as a retro flight strip and lets you dispatch GitHub issues to agents (Grok CLI, Claude Code, Codex CLI, Antigravity) with one **Takeoff** button.
 
@@ -27,11 +27,11 @@ Agents are shown as airlines — **GK Grok Air**, **CL Claude Airways**, **CX Co
 | **TAKEOFF** | agent process running now, live elapsed timer |
 | **GOOD DAY** | finished (READY TO MERGE) · STOPPED (intentional, grey) · **DIVERTED** (abnormal exit, red, plus an alert row). **✕ 已知道** hides a card (5 s undo, kept in `data/dismissed.json`); every card auto-hides after `goodDayHideHours` (default 6) |
 
-Click the **AI TOWER** title to flip to **StarBase** (v0.3.1), a full-screen launch complex for the three DEV Grok Bot pads — 沃茲, 克雷格, 強尼. Other agents are ignored. All three pads play the same Starship animation; agent name, role and status sit in the chrome around it. See [StarBase](#starbase).
+Click the **AI TOWER** title to flip to **StarBase** (v0.3.2), a full-screen launch complex for the three DEV Grok Bot pads — 沃茲, 克雷格, 強尼. Other agents are ignored. All three pads play the same Starship animation; agent name, role and status sit in the chrome around it. See [StarBase](#starbase).
 
 v0.3.0 — StarBase uses Andy's three Remotion scenes (stack / fuel / launch), two full-screen views, and a featured-agent layout.
 
-v0.3.1 — Safari freeze fix: Remotion waits on a suspended AudioContext before advancing frames, so the silent player now hides AudioContext and uses requestAnimationFrame.
+v0.3.2 — Safari freeze fix (the v0.3.1 AudioContext theory was wrong): WebKit traces confirmed the freeze was caused by postMessage race conditions (early commands dropped before bridge ready() due to iframe rAF latency, then overridden by URL mode=hold). bridge.js now queues early commands and polls with setTimeout; app.js drives after ready. The 沃茲 pad now also shows stand-alone Grok / Claude / Codex jobs running in the main repo's worktrees as in progress, with issue titles.
 
 Flight number = airline code + the line's **primary issue** (first `#N` in its runner-table comment, else in its progress file); other issues show as blue tags.
 
@@ -144,11 +144,11 @@ AI Tower 是一個本機「塔台」：把背景跑的 AI 寫程式代理（Grok
 | **TAKEOFF 飛行中** | agent 程序正在跑，即時計時 |
 | **GOOD DAY 已落地** | 完成（READY TO MERGE／可整合）、STOPPED（刻意停止，灰）、**DIVERTED**（異常結束，紅＋警示列）。按 **✕ 已知道** 可隱藏（5 秒內可撤銷，記在 `data/dismissed.json`）；超過 `goodDayHideHours`（預設 6 小時）自動隱藏 |
 
-點 header 的 **AI TOWER** 標題會翻到全螢幕 **StarBase**（v0.3.1），只顯示三位 DEV Grok Bot：沃茲、克雷格、強尼。其他 agent 忽略。三位都播同一段 Starship 動畫，名字／職責／狀態疊在外框。見下方「StarBase」。
+點 header 的 **AI TOWER** 標題會翻到全螢幕 **StarBase**（v0.3.2），只顯示三位 DEV Grok Bot：沃茲、克雷格、強尼。其他 agent 忽略。三位都播同一段 Starship 動畫，名字／職責／狀態疊在外框。見下方「StarBase」。
 
 v0.3.0 — 三段 Remotion 動畫（上台／加注／發射回收）、塔台與發射場兩個全螢幕頁、可點選的主角 agent。
 
-v0.3.1 — Safari 動畫凍結修正：Remotion 會等 AudioContext.resume() 才推進畫格，iframe 裡沒有使用者手勢時 Safari 永遠不放行。
+v0.3.2 — Safari 動畫凍結修正（v0.3.1 的 AudioContext 推論不是真因）：WebKit trace 證實真因為 iframe rAF 延遲導致 bridge 在 ready() 前遺失 postMessage 指令，且被 URL mode=hold 覆蓋；現改為 bridge 指令佇列緩衝、setTimeout 輔助輪詢、以及 app.js 於 ready 事件後重送播放意圖。 沃茲 面板現在也會把主 repo worktree 裡獨立執行的 Grok／Claude／Codex 工作顯示為進行中，並帶 issue 標題。
 
 航班號 = 航空公司代碼 + 該 line 的**主要 issue**（runner 對照表註解中的第一個 `#N`，沒有就看進度檔）；其他 issue 顯示為藍色標籤。
 

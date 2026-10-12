@@ -11,8 +11,9 @@
 
 ## 做了什麼
 
-- `bridge.js` 在 bundle 載入前把 `window.AudioContext`／`webkitAudioContext` 設成 undefined。Remotion 改走 requestAnimationFrame 時鐘，不再等 Safari 不放行的 `audioContext.resume()`。ready() 時 `P.mute()`。watchdog 保留。
-- 動畫資產版本集中 `SB_ASSET_V = '0.3.1'`。`specUrl()`、`player.html` 的 `bridge.js` 與 `starbase.js` 都帶 `?v=0.3.1`，一般重新整理就拿到新 bridge。
+- `bridge.js` 實作指令佇列緩衝（`createBridgeQueue`），不再丟棄在 `ready()` 前抵達的 early postMessage 指令；並將 `wait()` 加上 `setTimeout` 輔助輪詢（避免 WebKit iframe 初次 rAF 延遲 250ms）；若收到 play 後的 resume 亦視為播放。保留先前的防禦性 AudioContext stub。
+- `app.js` 僅在 iframe 回報 `ready` 後才發送播放指令，並在 `ready` 事件到達時補送播放意圖，徹底消除 WebKit/Safari 凍結問題。
+- 動畫資產版本改用內容 hash（`SB_ASSET_V` 只是 fallback）。`specUrl()`、`player.html` 的 `bridge.js` 與 `starbase.js` 都帶內容 hash，一般重新整理就拿到新 bridge。
 - 拿掉 iframe `sandbox="allow-scripts allow-same-origin"`（兩個一起給等於沒有 sandbox，Chromium 會警告）。
 - header 兩處版本小字改 v0.3.1；README 加 v0.3.1 段。
 

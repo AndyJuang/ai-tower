@@ -159,7 +159,12 @@
   // ---------- StarBase ----------
   const VIEW_KEY = 'tower.view';
   const FEAT_KEY = 'tower.sbFeatured';
-  const SB_ASSET_V = '0.3.1';
+  const sbHashMeta = document.querySelector('meta[name="starbase-hash"]');
+  const SB_ASSET_V = (sbHashMeta && sbHashMeta.content && !sbHashMeta.content.startsWith('__')) ? sbHashMeta.content : '0.3.2';
+  function sbAssetVersion() {
+    const sb = data && data.starbase;
+    return (sb && sb.hash) || SB_ASSET_V || 'sb';
+  }
   const SB_PLAYERS = new Map();
   const SB_CHIP = { queued: 'T- 待命', in_progress: '加注中', blocked: 'HOLD · 卡住', done: '已升空', empty: '待命', stack: '上台中', launch: '升空' };
   function reducedMotion() { return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches; }
@@ -187,7 +192,7 @@
     else if (spec.mode === 'once') q.set('frame', '0');
     if (spec.intro === 0) q.set('intro', '0');
     if (spec.progress != null) q.set('progress', String(spec.progress));
-    return '/starbase/player.html?v=' + SB_ASSET_V + '&' + q.toString();
+    return '/starbase/player.html?v=' + sbAssetVersion() + '&' + q.toString();
   }
   function clipKey(spec) { return StarbaseState.srcKey(spec); }
   function defaultFeatured(agents) {
@@ -285,6 +290,7 @@
     f.tabIndex = -1;
     f.setAttribute('aria-hidden', 'true');
     f.dataset.buf = buf;
+    f.dataset.ready = '0';
     f.src = 'about:blank';
     return f;
   }
@@ -322,6 +328,7 @@
   function driveIframe(p, iframe, st) {
     const live = playersLive();
     p.wantPlay = st.mode === 'once' || st.mode === 'loop';
+    if (iframe.dataset.ready !== '1') return;
     if (!live || st.mode === 'hold') {
       postIframe(iframe, { cmd: 'pause' });
       if (st.mode === 'hold' && st.frame != null) postIframe(iframe, { cmd: 'seek', frame: st.frame });
@@ -358,6 +365,7 @@
     nowI.classList.add('on');
     if (old !== nowI) blankIframe(old);
     p.show = buf;
+    if (p.pending && clipKey(p.pending) === nowI.dataset.clip) p.pending = null;
     if (p.state) driveIframe(p, nowI, p.state);
     if (p.state && p.state.preload) {
       const hid = p[p.show === 'a' ? 'b' : 'a'];
@@ -426,8 +434,14 @@
         }
         if (d.ev === 'ready') {
           f.dataset.ready = '1';
-          if (p.pending && clipKey(p.pending) === f.dataset.clip && (p.swapOn === 'ready' || p.show === buf)) swapTo(p, buf);
-          else if (!p[p.show].classList.contains('on') && p.state && clipKey(p.state) === f.dataset.clip) swapTo(p, buf);
+          if (p.pending && clipKey(p.pending) === f.dataset.clip && (p.swapOn === 'ready' || p.show === buf)) {
+            p.pending = null;
+            swapTo(p, buf);
+          } else if (p.show === buf && p.state && clipKey(p.state) === f.dataset.clip) {
+            driveIframe(p, f, p.state);
+          } else if (!p[p.show].classList.contains('on') && p.state && clipKey(p.state) === f.dataset.clip) {
+            swapTo(p, buf);
+          }
         }
         if (d.ev === 'ended' && buf === p.show) {
           f.dataset.ended = '1';

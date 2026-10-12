@@ -4,6 +4,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
+const STARBASE = require('../lib/starbase');
 const css = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
 const js = fs.readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');
 const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
@@ -43,9 +44,9 @@ check('two full-screen views Tower / StarBase', () => {
   if (!/body\.flipping/.test(css) && !/classList\.add\('flipping'\)/.test(js)) throw new Error('flipping class');
 });
 
-check('header version is v0.3.1', () => {
-  if (!/v0\.3\.1/.test(html)) throw new Error('html version');
-  const n = (html.match(/v0\.3\.1/g) || []).length;
+check('header version is v0.3.2', () => {
+  if (!/v0\.3\.2/.test(html)) throw new Error('html version');
+  const n = (html.match(/v0\.3\.2/g) || []).length;
   if (n < 2) throw new Error('version on both titles ' + n);
 });
 
@@ -66,16 +67,17 @@ check('player.html is a thin 8:3 shell', () => {
   if (/#05070d/.test(player) === false) throw new Error('bg');
 });
 
-check('player asset version is one constant across app + player.html', () => {
-  const appV = (js.match(/SB_ASSET_V\s*=\s*'([^']+)'/) || [])[1];
+check('player asset version is dynamic and content-hashed', () => {
+  const appV = (js.match(/SB_ASSET_V\s*=\s*([^\n;]+)/) || [])[1];
   if (!appV) throw new Error('SB_ASSET_V missing');
-  if (js.indexOf("player.html?v=' + SB_ASSET_V") < 0) throw new Error('specUrl does not use SB_ASSET_V');
+  if (js.indexOf("player.html?v=' + sbAssetVersion()") < 0) throw new Error('specUrl does not use sbAssetVersion()');
   const bridgeV = (player.match(/bridge\.js\?v=([^"']+)/) || [])[1];
   const bundleV = (player.match(/starbase\.js\?v=([^"']+)/) || [])[1];
   if (!bridgeV) throw new Error('player.html bridge.js missing ?v=');
   if (!bundleV) throw new Error('player.html starbase.js missing ?v=');
-  if (bridgeV !== appV) throw new Error('bridge.js v=' + bridgeV + ' != SB_ASSET_V ' + appV);
-  if (bundleV !== appV) throw new Error('starbase.js v=' + bundleV + ' != SB_ASSET_V ' + appV);
+  const hashes = STARBASE.starbaseHashes(ROOT);
+  if (!hashes.bridge || !hashes.asset) throw new Error('starbaseHashes failed');
+  if (!/name="starbase-hash"/.test(html)) throw new Error('index.html missing starbase-hash meta');
 });
 
 check('bridge.js origin-checks postMessage', () => {

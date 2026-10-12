@@ -19,6 +19,9 @@
     { "name": "克雷格", "role": "iPhone/iPad App", "vehicle": "falcon9" },
     { "name": "強尼", "role": "設計", "vehicle": "mcgregor" }
   ],
+  "starbase": {
+    "desktopAgent": "沃茲"
+  },
   "manualIssueRegex": "manual|實機",
   "manualSectionTitle": "需要實機 · 手動測試",
   "issueRepos": [

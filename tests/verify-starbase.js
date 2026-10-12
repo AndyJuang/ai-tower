@@ -105,16 +105,21 @@ async function api() {
     if (!sj.starbase || !sj.starbase.agents) fail('/api/strips missing starbase'); else ok('/api/strips has starbase');
     const html = await get('http://127.0.0.1:4790/', '127.0.0.1:4790');
     if (!/id="view-tower"/.test(html.body) || !/id="view-starbase"/.test(html.body)) fail('HTML missing two views'); else ok('HTML has Tower/StarBase views');
-    if (!/v0\.3\.1/.test(html.body)) fail('HTML missing v0.3.1'); else ok('HTML has v0.3.1');
+    if (!/v0\.3\.2/.test(html.body)) fail('HTML missing v0.3.2'); else ok('HTML has v0.3.2');
+    if (!/name="starbase-hash" content="[a-f0-9]{8}"/.test(html.body)) fail('HTML missing content-hashed starbase-hash meta'); else ok('HTML has content-hashed starbase-hash meta');
     if (/id="sb-toggle"/.test(html.body)) fail('old sb-toggle still in HTML'); else ok('no overlay toggle');
     const johnny = j.agents.find(a => a.name === '強尼');
     const recent = johnny && (johnny.tasks || []).find(t => t.status === 'done' && t.done_at && (Date.now() - t.done_at) < 60e3);
     if (!recent) fail('demo 強尼 missing recent done_at'); else ok('demo 強尼 recent done');
-    const player = await get('http://127.0.0.1:4790/starbase/player.html?v=0.3.1&scene=fuel', '127.0.0.1:4790');
+    const player = await get('http://127.0.0.1:4790/starbase/player.html?scene=fuel', '127.0.0.1:4790');
     if (player.status !== 200) fail('player.html ' + player.status); else ok('player.html 200');
     if (!/onerror/.test(player.body)) fail('player.html missing onerror'); else ok('player.html onerror');
-    if (!/bridge\.js\?v=0\.3\.1/.test(player.body)) fail('player.html missing versioned bridge.js'); else ok('player.html bridge.js?v=0.3.1');
-    if (!/starbase\.js\?v=0\.3\.1/.test(player.body)) fail('player.html missing versioned starbase.js'); else ok('player.html starbase.js?v=0.3.1');
+    const bridgeMatch = player.body.match(/bridge\.js\?v=([a-f0-9]{8})/);
+    const bundleMatch = player.body.match(/starbase\.js\?v=([a-f0-9]{8}|missing)/);
+    if (!bridgeMatch) fail('player.html missing content-hashed bridge.js'); else ok('player.html bridge.js?v=' + bridgeMatch[1]);
+    if (!bundleMatch) fail('player.html missing content-hashed starbase.js'); else ok('player.html starbase.js?v=' + bundleMatch[1]);
+    const pcc = String((player.headers && (player.headers['cache-control'] || player.headers['Cache-Control'])) || '');
+    if (/max-age=86400/.test(pcc)) fail('player.html should not have 1 day cache'); else ok('player.html Cache-Control ' + (pcc || 'no-store'));
     const hasBundle = fs.existsSync(path.join(ROOT, 'public', 'starbase', 'starbase.js'));
     const bundle = await get('http://127.0.0.1:4790/starbase/starbase.js', '127.0.0.1:4790');
     if (!hasBundle) {
@@ -143,7 +148,7 @@ async function api() {
 
   const tmpCfg = path.join(os.tmpdir(), 'tower-sb-4791.json');
   const example = JSON.parse(fs.readFileSync(path.join(ROOT, 'config.example.json'), 'utf8'));
-  const realDir = path.join(os.homedir(), 'claudeai知識庫', 'VIBE_開發專案', '_grok-logs', 'starbase', 'agents');
+  const realDir = process.env.STARBASE_AGENTS_DIR || path.join(os.homedir(), '_grok-logs', 'starbase', 'agents');
   example.port = 4791;
   example.demo = false;
   example.starbaseDir = realDir;

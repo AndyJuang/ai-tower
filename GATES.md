@@ -12,7 +12,7 @@ Scope: STARBASE3_FEEDBACK.md v0.3.1 — hide AudioContext before Remotion loads,
 - [x] G2: unit tests all pass
   CHECK: for t in tests/*.test.js; do node "$t" || exit 1; done && echo STARBASE_TESTS_OK
   EXPECT: STARBASE_TESTS_OK
-  EVIDENCE: STARBASE_TESTS_OK（dispatch、processes、starbase-state 25 PASS、starbase、ui-static）
+  EVIDENCE: STARBASE_TESTS_OK（bridge-queue 12 PASS、dispatch、processes、starbase-state 25 PASS、starbase、ui-static）
 
 - [x] G3: UI static includes AudioContext stub, versioned assets, no sandbox
   CHECK: node tests/ui-static.test.js

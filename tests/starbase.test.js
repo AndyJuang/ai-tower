@@ -150,5 +150,56 @@ check('resolveAgents accepts name strings', () => {
   assert.equal(a[2].role, '設計');
 });
 
+check('load with wozTasks merges in-progress tasks before historical tasks and deduplicates', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-woz-'));
+  fs.writeFileSync(path.join(dir, '沃茲.json'), JSON.stringify([
+    { task: '舊歷史任務', status: '完成', done_at: new Date(Date.now() - 3600e3).toISOString() }
+  ]));
+  const wozTasks = [
+    {
+      agent: '沃茲',
+      task: '即時進行中 GK 任務',
+      status: 'in_progress',
+      statusZh: '進行中',
+      started_at: Date.now() - 10e3,
+      link: 'https://github.com/test/repo/issues/1',
+      note: 'Grok 實作中'
+    }
+  ];
+  const snap = sb.load({ starbaseDir: dir, goodDayHideHours: 6 }, { wozTasks, now: Date.now(), cache: new Map() });
+  const woz = snap.agents.find(a => a.name === '沃茲');
+  assert.ok(woz);
+  assert.equal(woz.tasks.length, 2);
+  assert.equal(woz.tasks[0].task, '即時進行中 GK 任務');
+  assert.equal(woz.tasks[0].status, 'in_progress');
+  assert.equal(woz.tasks[0].statusZh, '進行中');
+  assert.equal(woz.tasks[1].task, '舊歷史任務');
+});
+
+check('findDesktopAgent resolves from config, role, or fallback', () => {
+  assert.equal(sb.findDesktopAgent({ starbase: { desktopAgent: '自訂A' } }), '自訂A');
+  assert.equal(sb.findDesktopAgent({ starbaseDesktopAgent: '自訂B' }), '自訂B');
+  assert.equal(sb.findDesktopAgent({ starbaseAgents: [{ name: '小王', role: '桌面 App' }] }), '小王');
+  assert.equal(sb.findDesktopAgent({}), '沃茲');
+});
+
+check('load with custom desktopAgent merges tasks into that agent and includes hash', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sb-cust-'));
+  const snap = sb.load({
+    starbaseDir: dir,
+    starbaseAgents: [{ name: '自訂Agent', role: '桌面 App', vehicle: 'starship' }]
+  }, {
+    wozTasks: [{ agent: '自訂Agent', task: '自訂工作', status: 'in_progress', started_at: Date.now() }],
+    desktopAgent: '自訂Agent',
+    now: Date.now(),
+    cache: new Map()
+  });
+  const agent = snap.agents.find(a => a.name === '自訂Agent');
+  assert.ok(agent);
+  assert.equal(agent.tasks.length, 1);
+  assert.equal(agent.tasks[0].task, '自訂工作');
+  assert.ok(snap.hash);
+});
+
 if (failed) { console.error('FAIL'); process.exit(1); }
 console.log('PASS');
