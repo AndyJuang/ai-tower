@@ -1,43 +1,41 @@
-# StarBase v0.3.0 進度
+# StarBase v0.3.1 進度
 
 - 狀態：可整合
-- 版本：v0.3.0
+- 版本：v0.3.1
 - 分支：feat/starbase
-- 功能 commit：`b151af2`
 - 日期：2026-10-12
 
 ## 這次要做
 
-依 `docs/STARBASE3_FEEDBACK.md` 只修 Grok Bot 列出的 6 項。
+依 `docs/STARBASE3_FEEDBACK.md` 只修 Safari 動畫凍結（v0.3.1）。
 
 ## 做了什麼
 
-- 01／03 播一次：iframe `dataset.started = clipKey|mode|phase`，同一簽名只送 `{cmd:'resume'}`，不再每次 poll 從 0 重播。`loadClip`／`blankIframe` 清掉 started。
-- `bridge.js`：`startSoon()` 兩個 rAF 後才 play；300ms watchdog 在 isPlaying 但畫格不動時 pause→seek→play。新增 `{cmd:'resume'}`。visibility 回來也走 startSoon。等不到 `__player` 約 3 秒回報 error。
-- 收到 ended、狀態機換段後立刻 `refreshPadChrome()` 更新 chip／文字。
-- HOLD 標籤改到動畫底部中央、紅黃條紋上方。
-- Remotion bundle 不進公開 repo：`.gitignore` 加 `public/starbase/starbase.js`、`public/starbase/src/`，`git rm --cached`（磁碟檔留下）。`player.html` script onerror 回報 missing；app 顯示「動畫檔未安裝」佔位。README 寫授權與 extract 步驟。
-- StarBase 頁 html／body／stage／view `overflow: hidden`＋`overflow: clip`、`max-height: 100%`，修 1280×800 多 1px 捲動。
+- `bridge.js` 在 bundle 載入前把 `window.AudioContext`／`webkitAudioContext` 設成 undefined。Remotion 改走 requestAnimationFrame 時鐘，不再等 Safari 不放行的 `audioContext.resume()`。ready() 時 `P.mute()`。watchdog 保留。
+- 動畫資產版本集中 `SB_ASSET_V = '0.3.1'`。`specUrl()`、`player.html` 的 `bridge.js` 與 `starbase.js` 都帶 `?v=0.3.1`，一般重新整理就拿到新 bridge。
+- 拿掉 iframe `sandbox="allow-scripts allow-same-origin"`（兩個一起給等於沒有 sandbox，Chromium 會警告）。
+- header 兩處版本小字改 v0.3.1；README 加 v0.3.1 段。
 
 ## 改了哪些檔
 
-- `public/app.js`、`public/style.css`
 - `public/starbase/bridge.js`、`public/starbase/player.html`
-- `.gitignore`（untrack `starbase.js` 與 `src/*.html`）
-- `tools/extract-starbase.js`、`README.md`
+- `public/app.js`、`public/index.html`
 - `tests/ui-static.test.js`、`tests/verify-starbase.js`
-- `GATES.md`、`docs/STARBASE3_PROGRESS.md`、`docs/STARBASE3_FEEDBACK.md`
+- `README.md`、`GATES.md`、`docs/STARBASE3_PROGRESS.md`
 
-未改、未 commit：`animations/`。bundle 檔留在磁碟、不進 git。
+未改、未 commit：`animations/`、`public/starbase/starbase.js`、`public/starbase/src/`。
 
 ## 測試結果
 
 - `node --check` 所列 JS → STARBASE_SYNTAX_OK
-- `node tools/extract-starbase.js` 連跑兩次產物不變 → EXTRACT_OK 525833 bytes
 - `tests/*.test.js` 全過（dispatch、processes、starbase-state 25 PASS、starbase、ui-static）
-- `node tests/verify-starbase.js --all` → STARBASE_VERIFY_OK（含 NOPATH、4790 demo、4791 真實資料、starbase.js 200 public 525833、`/starbase/__missing__.js` 404、server still up）
-- 手動 `TOWER_PORT=4790 TOWER_DEMO=1`：`/` 兩頁＋v0.3.0；`/api/starbase` 沃茲進行中、克雷格卡住、強尼完成＋排隊；player onerror；starbase.js 200、`Cache-Control: public, max-age=86400`、525833 bytes；bridge／starbase-state 200。已殺自己的 pid 60570。4777 未動。
+- `node tests/verify-starbase.js --all` → STARBASE_VERIFY_OK（含 NOPATH、4790 demo、4791 真實資料、player.html bridge.js?v=0.3.1、starbase.js 200 public 525833）
+- 手動 `TOWER_PORT=4790 TOWER_DEMO=1` pid 80649：`/starbase/player.html?v=0.3.1&scene=fuel` 200、`Cache-Control: public, max-age=86400`、body 含 `bridge.js?v=0.3.1` 與 `starbase.js?v=0.3.1`；`/` 兩處 v0.3.1。已殺自己的 pid 80649。4777 未動。
 
 ## DEFERRED
 
-Grok Bot 另機截圖：待命／01 播放／02 循環／03 發射／卡住／兩模式／翻頁中間格／各 agent 當主角（確認 once 不再被 poll 重播、HOLD 不擋 HUD、1280×800 不捲）。
+Grok Bot 另機截圖：Safari 02 加注循環是否真的在走（不再停在第 90 幀）；待命／01／03／卡住／兩模式。
+
+## 上一版 v0.3.0
+
+once 不重播、play watchdog、chip 即時、HOLD 底部、bundle gitignore、1280×800 不捲。

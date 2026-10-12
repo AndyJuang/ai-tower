@@ -159,6 +159,7 @@
   // ---------- StarBase ----------
   const VIEW_KEY = 'tower.view';
   const FEAT_KEY = 'tower.sbFeatured';
+  const SB_ASSET_V = '0.3.1';
   const SB_PLAYERS = new Map();
   const SB_CHIP = { queued: 'T- 待命', in_progress: '加注中', blocked: 'HOLD · 卡住', done: '已升空', empty: '待命', stack: '上台中', launch: '升空' };
   function reducedMotion() { return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches; }
@@ -186,7 +187,7 @@
     else if (spec.mode === 'once') q.set('frame', '0');
     if (spec.intro === 0) q.set('intro', '0');
     if (spec.progress != null) q.set('progress', String(spec.progress));
-    return '/starbase/player.html?v=0.3.0&' + q.toString();
+    return '/starbase/player.html?v=' + SB_ASSET_V + '&' + q.toString();
   }
   function clipKey(spec) { return StarbaseState.srcKey(spec); }
   function defaultFeatured(agents) {
@@ -283,7 +284,6 @@
     f.title = 'StarBase 動畫 · ' + agent;
     f.tabIndex = -1;
     f.setAttribute('aria-hidden', 'true');
-    f.setAttribute('sandbox', 'allow-scripts allow-same-origin');
     f.dataset.buf = buf;
     f.src = 'about:blank';
     return f;

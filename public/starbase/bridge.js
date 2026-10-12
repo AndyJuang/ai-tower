@@ -1,5 +1,15 @@
 (function () {
   'use strict';
+  // v0.3.1: the scenes are silent, but Remotion's Player drives its frame loop from an AudioContext
+  // clock and waits for audioContext.resume() before advancing. Safari keeps an AudioContext suspended
+  // until a user gesture inside the frame, so resume() never settles and the player sits on one frame
+  // while isPlaying() stays true. Hide AudioContext before the bundle loads so the player uses its
+  // plain requestAnimationFrame clock (Remotion's own "AudioContext is not supported" path).
+  try {
+    ['AudioContext', 'webkitAudioContext'].forEach(function (k) {
+      Object.defineProperty(window, k, { value: undefined, configurable: true, writable: true });
+    });
+  } catch (e) {}
   var q = new URLSearchParams(location.search);
   var DUR = { stack: 300, fuel: 390, launch: 780 };
   var sc = q.get('scene');
@@ -73,6 +83,7 @@
   function ready() {
     P = window.__player;
     if (!P) return false;
+    try { if (P.mute) P.mute(); } catch (e) {}
     P.addEventListener('frameupdate', onFrame);
     if (mode === 'hold') applyHold();
     else if (mode === 'once') { last = -1; if (hold) P.seekTo(hold); startSoon(); }

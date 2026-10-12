@@ -43,9 +43,9 @@ check('two full-screen views Tower / StarBase', () => {
   if (!/body\.flipping/.test(css) && !/classList\.add\('flipping'\)/.test(js)) throw new Error('flipping class');
 });
 
-check('header version is v0.3.0', () => {
-  if (!/v0\.3\.0/.test(html)) throw new Error('html version');
-  const n = (html.match(/v0\.3\.0/g) || []).length;
+check('header version is v0.3.1', () => {
+  if (!/v0\.3\.1/.test(html)) throw new Error('html version');
+  const n = (html.match(/v0\.3\.1/g) || []).length;
   if (n < 2) throw new Error('version on both titles ' + n);
 });
 
@@ -58,12 +58,24 @@ check('old overlay / SVG rockets removed', () => {
 
 check('player.html is a thin 8:3 shell', () => {
   if (!/#root/.test(player)) throw new Error('#root');
-  if (!/bridge\.js/.test(player)) throw new Error('bridge.js');
-  if (!/starbase\.js\?v=0\.3\.0/.test(player)) throw new Error('starbase.js cache bust');
+  if (!/bridge\.js\?v=/.test(player)) throw new Error('bridge.js cache bust');
+  if (!/starbase\.js\?v=/.test(player)) throw new Error('starbase.js cache bust');
   if (!/onerror/.test(player)) throw new Error('player.html onerror for missing bundle');
   if (!/min\(100vw,\s*calc\(100vh \* 8 \/ 3\)\)/.test(player) && !/min\(100vw,calc\(100vh \* 8 \/ 3\)\)/.test(compact(player))) throw new Error('8:3 width');
   if (/max-width:\s*1200px/.test(player)) throw new Error('old max-width 1200');
   if (/#05070d/.test(player) === false) throw new Error('bg');
+});
+
+check('player asset version is one constant across app + player.html', () => {
+  const appV = (js.match(/SB_ASSET_V\s*=\s*'([^']+)'/) || [])[1];
+  if (!appV) throw new Error('SB_ASSET_V missing');
+  if (js.indexOf("player.html?v=' + SB_ASSET_V") < 0) throw new Error('specUrl does not use SB_ASSET_V');
+  const bridgeV = (player.match(/bridge\.js\?v=([^"']+)/) || [])[1];
+  const bundleV = (player.match(/starbase\.js\?v=([^"']+)/) || [])[1];
+  if (!bridgeV) throw new Error('player.html bridge.js missing ?v=');
+  if (!bundleV) throw new Error('player.html starbase.js missing ?v=');
+  if (bridgeV !== appV) throw new Error('bridge.js v=' + bridgeV + ' != SB_ASSET_V ' + appV);
+  if (bundleV !== appV) throw new Error('starbase.js v=' + bundleV + ' != SB_ASSET_V ' + appV);
 });
 
 check('bridge.js origin-checks postMessage', () => {
@@ -76,6 +88,11 @@ check('bridge.js origin-checks postMessage', () => {
   if (!/function startSoon/.test(bridge)) throw new Error('startSoon watchdog');
   if (!/cmd === 'resume'|cmd==='resume'/.test(bridge)) throw new Error('resume cmd');
   if (!/3000/.test(bridge)) throw new Error('ready timeout ~3s');
+  const hideAt = bridge.indexOf('Object.defineProperty(window, k');
+  const playerAt = bridge.indexOf('window.__player');
+  if (hideAt < 0 || playerAt < 0 || hideAt > playerAt) throw new Error('AudioContext must be hidden before __player is used');
+  if (!/webkitAudioContext/.test(bridge)) throw new Error('webkitAudioContext stub');
+  if (!/P\.mute/.test(bridge)) throw new Error('mute on ready');
 });
 
 check('starbase-state UMD + rules', () => {
@@ -93,7 +110,7 @@ check('extract tool compares the three scene scripts', () => {
 
 check('dual iframe pads, never rebuilt on poll', () => {
   if (!/data-buf|dataset\.buf/.test(js)) throw new Error('dual buffer');
-  if (!/allow-scripts allow-same-origin/.test(js)) throw new Error('sandbox');
+  if (/sandbox/.test(js)) throw new Error('iframe sandbox still present');
   if (!/loading = 'lazy'|loading="lazy"/.test(js)) throw new Error('lazy');
   if (!/aria-hidden/.test(js)) throw new Error('aria-hidden iframe');
   if (!/applyPadPlayer|dataset\.clip/.test(js)) throw new Error('player apply');

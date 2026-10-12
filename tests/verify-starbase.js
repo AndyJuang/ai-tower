@@ -105,14 +105,16 @@ async function api() {
     if (!sj.starbase || !sj.starbase.agents) fail('/api/strips missing starbase'); else ok('/api/strips has starbase');
     const html = await get('http://127.0.0.1:4790/', '127.0.0.1:4790');
     if (!/id="view-tower"/.test(html.body) || !/id="view-starbase"/.test(html.body)) fail('HTML missing two views'); else ok('HTML has Tower/StarBase views');
-    if (!/v0\.3\.0/.test(html.body)) fail('HTML missing v0.3.0'); else ok('HTML has v0.3.0');
+    if (!/v0\.3\.1/.test(html.body)) fail('HTML missing v0.3.1'); else ok('HTML has v0.3.1');
     if (/id="sb-toggle"/.test(html.body)) fail('old sb-toggle still in HTML'); else ok('no overlay toggle');
     const johnny = j.agents.find(a => a.name === '強尼');
     const recent = johnny && (johnny.tasks || []).find(t => t.status === 'done' && t.done_at && (Date.now() - t.done_at) < 60e3);
     if (!recent) fail('demo 強尼 missing recent done_at'); else ok('demo 強尼 recent done');
-    const player = await get('http://127.0.0.1:4790/starbase/player.html', '127.0.0.1:4790');
+    const player = await get('http://127.0.0.1:4790/starbase/player.html?v=0.3.1&scene=fuel', '127.0.0.1:4790');
     if (player.status !== 200) fail('player.html ' + player.status); else ok('player.html 200');
     if (!/onerror/.test(player.body)) fail('player.html missing onerror'); else ok('player.html onerror');
+    if (!/bridge\.js\?v=0\.3\.1/.test(player.body)) fail('player.html missing versioned bridge.js'); else ok('player.html bridge.js?v=0.3.1');
+    if (!/starbase\.js\?v=0\.3\.1/.test(player.body)) fail('player.html missing versioned starbase.js'); else ok('player.html starbase.js?v=0.3.1');
     const hasBundle = fs.existsSync(path.join(ROOT, 'public', 'starbase', 'starbase.js'));
     const bundle = await get('http://127.0.0.1:4790/starbase/starbase.js', '127.0.0.1:4790');
     if (!hasBundle) {
