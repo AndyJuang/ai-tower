@@ -253,11 +253,12 @@ function pumpIssues() {
 
 // ---------- strip assembly ----------
 function fmtHM(t) { if (!t) return null; const d = new Date(t); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
+const grokSeen = new Map();   // stand-alone grok jobs seen this server lifetime (for land/divert after exit)
 async function buildSnapshot() {
   const now = Date.now();
   const table = readLineTable(); lastTable = table;   // worktreeFor / repoOfLine read it
   const procs = await psSnapshot();
-  const { runners, queueAlive, orphans } = mapProcesses(procs);
+  const { runners, queueAlive, orphans, grokOrphans } = mapProcesses(procs);
   const queues = readQueues(queueAlive);
   const queued = new Map(); const launchedByQueue = new Set();
   for (const q of queues) { q.everLaunched.forEach(x => launchedByQueue.add(x)); if (!q.alive) continue;
@@ -328,6 +329,35 @@ async function buildSnapshot() {
       wt, branch: wt ? await gitBranch(wt) : null, issues: [], progress: {}, std: o.started, since: o.started, attempt: 1,
       runnerPid: null, agentPid: o.pid, lastEvent: 'stand-alone codex exec (no tower runner)', tags: ['手動'], status: 'TAKEOFF', bay: 'takeoff',
       titleHint: wt ? path.basename(wt) : 'Codex job' });
+  }
+  // stand-alone grok jobs (e.g. `bash …/run.sh <worktree> <issue…>` → `grok --prompt-file …`): TAKEOFF while alive, land/divert after exit
+  const liveGrok = new Set();
+  for (const o of grokOrphans || []) {
+    if (!o.wt) o.wt = await cwdOf(o.pid);
+    const id = o.line || (o.wt ? path.basename(o.wt) : 'grok-pid' + o.pid);
+    if (liveGrok.has(id)) continue; liveGrok.add(id);
+    const prev = grokSeen.get(id);
+    const s = { id, callsign: id, flight: o.issues.length ? PRODUCTS.flightLabel('GK', REPO, o.issues[0].slice(1)) : 'GK ' + String(o.pid).slice(-3), primary: o.issues[0] ? o.issues[0].slice(1) : null,
+      repo: REPO, product: PRODUCTS.productOf(REPO), airline: AIRLINES.grok, project: id, wt: o.wt, branch: (prev && prev.branch) || (o.wt ? await gitBranch(o.wt) : null),
+      issues: o.issues, progress: {}, std: o.started, since: o.started, attempt: 1, runnerPid: o.wrapperPid, agentPid: o.pid,
+      lastEvent: 'stand-alone grok job (no tower runner)', tags: ['手動'], status: 'TAKEOFF', bay: 'takeoff', titleHint: id };
+    if (/T/.test(o.stat || '')) s.tags.push('暫停');
+    grokSeen.set(id, { ...s, tags: s.tags.slice() });
+    strips.push(s);
+  }
+  for (const [id, g] of grokSeen) {
+    if (liveGrok.has(id)) continue;
+    if (!g.endedAt) {
+      g.endedAt = now; let done = false;
+      try { done = /^\s*DONE/i.test(fs.readFileSync(path.join(g.wt || '', '.line-done'), 'utf8')); } catch (_) {}
+      g.status = done ? 'LANDED' : 'DIVERTED'; g.bay = 'goodday'; g.runnerPid = null; g.agentPid = null;
+      g.reason = done ? 'grok job exited; .line-done = DONE' : 'grok job exited without .line-done DONE';
+      if (g.std) g.flightMin = Math.round((g.endedAt - g.std) / 60e3);
+    }
+    const age = (now - g.endedAt) / 60e3;
+    if (age > (g.status === 'LANDED' ? LANDED_DROP_MIN : DIVERTED_KEEP_MIN)) { grokSeen.delete(id); continue; }
+    if (dismissed[id] && Math.abs(dismissed[id] - g.endedAt) < 120e3) continue;
+    strips.push({ ...g, issues: g.issues.slice(), tags: g.tags.slice(), fade: g.status === 'LANDED' && age > LANDED_KEEP_MIN });
   }
   await Promise.all(strips.map(async s => {
     const wt = s.wt || worktreeFor(s.id); const c = gitCache.get(wt);

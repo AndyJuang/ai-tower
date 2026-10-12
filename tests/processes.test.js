@@ -133,5 +133,25 @@ check('isLiveCap: TAKEOFF yes, GOOD DAY no', () => {
   assert.equal(P.isLiveCap(strip('d', 'codex', 'SCHEDULED', { bay: 'park' })), false);
 });
 
+check('stand-alone grok job under a wrapper → grokOrphan with wt line + trailing issues', () => {
+  const wt = '/x/proj-wt-grok-v9-i11';
+  const procs = [proc(300, 1, `/bin/bash /x/_logs/v9/run.sh ${wt} 11 12`), proc(301, 300, 'grok --always-approve --prompt-file /x/_logs/v9/p-11.md --debug-file /x/d.log'),
+    proc(302, 1, '/Users/a/.grok/bin/grok')];
+  const { runners, orphans, grokOrphans } = P.mapProcesses(procs, OPTS);
+  assert.equal(Object.keys(runners).length, 0); assert.equal(orphans.length, 0);
+  assert.equal(grokOrphans.length, 1, 'interactive bare grok ignored');
+  const g = grokOrphans[0];
+  assert.equal(g.pid, 301); assert.equal(g.wrapperPid, 300); assert.equal(g.wt, wt); assert.equal(g.line, 'proj-wt-grok-v9-i11');
+  assert.deepEqual(g.issues, ['#11', '#12']);
+});
+
+check('grok job: issues fall back to worktree name; tower-owned grok is not an orphan', () => {
+  const procs = [proc(400, 1, '/bin/bash /x/run.sh /x/proj-wt-grok-v9-i21'), proc(401, 400, 'grok --prompt-file /x/p.md'),
+    proc(500, 1, `bash /tmp/logs/${SCRIPT} grok-v9-x`), proc(501, 500, 'grok -p hello')];
+  const { runners, grokOrphans } = P.mapProcesses(procs, OPTS);
+  assert.ok(runners['grok-v9-x'].agent);
+  assert.equal(grokOrphans.length, 1); assert.deepEqual(grokOrphans[0].issues, ['#21']);
+});
+
 if (failed) { console.error('FAIL'); process.exit(1); }
 console.log('PASS');
