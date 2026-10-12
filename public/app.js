@@ -14,11 +14,6 @@
   let data = null, loadedAt = Date.now(), busy = false, pendingRender = false, undoState = null, undoTimer = null;
   const open = new Set();
   const filt = Object.assign({ q: '', ms: '', repo: '' }, JSON.parse(localStorage.getItem('tower.filter') || '{}'));
-  const SB_KEY = 'tower.starbaseOpen';
-  const sbPlayed = new Set();
-  const sbPrev = new Map();
-  const sbLift = new Map();
-  const sbLiftTimer = new Map();
 
   const now = () => FROZEN && data ? data.generatedAt + (Date.now() - loadedAt) : Date.now();
   const tpe = t => new Date(t + ((data && data.tzOffsetMin != null ? data.tzOffsetMin : -new Date().getTimezoneOffset()) * 60e3));
@@ -56,15 +51,14 @@
   // ---------- clock ----------
   function tick() {
     const d = tpe(now()).toISOString();
-    $('#clock').innerHTML = flap(d.slice(11, 19), 'big');
-    $('#clock-date').textContent = ((data && data.tzLabel) ? data.tzLabel + ' ' : '') + d.slice(0, 10);
+    const stamp = ((data && data.tzLabel) ? data.tzLabel + ' ' : '') + d.slice(0, 10);
+    const clock = $('#clock'); if (clock) clock.innerHTML = flap(d.slice(11, 19), 'big');
+    const cdate = $('#clock-date'); if (cdate) cdate.textContent = stamp;
+    const sbc = $('#sb-clock'); if (sbc) sbc.innerHTML = flap(d.slice(11, 19), 'big');
+    const sbd = $('#sb-clock-date'); if (sbd) sbd.textContent = stamp;
     document.querySelectorAll('[data-since]').forEach(el => { el.innerHTML = flap(dur(now() - Number(el.dataset.since))); });
     document.querySelectorAll('[data-cd]').forEach(el => { el.innerHTML = flap(cd(Number(el.dataset.cd))); const l = el.previousElementSibling; if (l && Number(el.dataset.cd) <= now() && !l.dataset.done) { l.dataset.done = 1; l.textContent = '即將起飛'; } });
     document.querySelectorAll('[data-sb-elapsed]').forEach(el => { el.textContent = sbAgo(Number(el.dataset.sbElapsed)); });
-    document.querySelectorAll('[data-sb-fuel]').forEach(el => {
-      const started = Number(el.dataset.sbFuel) || now();
-      el.style.setProperty('--p', Math.round((((now() - started) / 12e5) % 1) * 100) + '%');
-    });
   }
   setInterval(tick, 1000);
 
@@ -163,14 +157,10 @@
   }
 
   // ---------- StarBase ----------
-  function sbOpen() { try { const v = localStorage.getItem(SB_KEY); return v === null ? true : v === '1'; } catch { return true; } }
-  function setSbOpen(on) {
-    try { localStorage.setItem(SB_KEY, on ? '1' : '0'); } catch {}
-    const el = $('#starbase'); if (!el) return;
-    el.classList.toggle('collapsed', !on);
-    document.body.classList.toggle('sb-on', on);
-    const btn = $('#sb-toggle'); if (btn) { btn.setAttribute('aria-expanded', on); btn.textContent = on ? '▾' : '▸'; btn.title = on ? '收合 StarBase' : '展開 StarBase'; }
-  }
+  const VIEW_KEY = 'tower.view';
+  const FEAT_KEY = 'tower.sbFeatured';
+  const SB_PLAYERS = new Map();
+  const SB_CHIP = { queued: 'T- 待命', in_progress: '加注中', blocked: 'HOLD · 卡住', done: '已升空', empty: '待命', stack: '上台中', launch: '升空' };
   function reducedMotion() { return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches; }
   function sbAgo(t) {
     if (!t) return '—';
@@ -179,265 +169,386 @@
     if (s < 3600) return Math.floor(s / 60) + 'm';
     return Math.floor(s / 3600) + 'h' + pad(Math.floor(s / 60) % 60);
   }
-  function sbMain(tasks) {
-    const live = tasks || [];
-    const pick = st => live.filter(t => t.status === st).sort((a, b) => (b.updated_at || b.started_at || 0) - (a.updated_at || a.started_at || 0))[0];
-    return pick('in_progress') || pick('queued') || pick('blocked') || null;
+  function sbMain(tasks) { return (typeof StarbaseState !== 'undefined' && StarbaseState.sbMain) ? StarbaseState.sbMain(tasks) : null; }
+  function viewMode() { try { return localStorage.getItem(VIEW_KEY) === 'starbase' ? 'starbase' : 'tower'; } catch { return 'tower'; } }
+  function featuredSaved() { try { return localStorage.getItem(FEAT_KEY) || ''; } catch { return ''; } }
+  function saveFeatured(name) { try { localStorage.setItem(FEAT_KEY, name || ''); } catch {} }
+  function playersLive() { return document.body.dataset.view === 'starbase' && !document.hidden; }
+  function postIframe(iframe, msg) {
+    try { if (iframe && iframe.contentWindow) iframe.contentWindow.postMessage(Object.assign({ sb: 1 }, msg), location.origin); } catch (e) {}
   }
-  function sbLiftTask(agentName, tasks) {
-    const list = tasks || [];
-    if (reducedMotion()) { list.filter(t => t.status === 'done').forEach(t => sbPlayed.add(t.id)); return null; }
-    const cur = sbLift.get(agentName);
-    if (cur && now() < cur.until) return list.find(t => t.id === cur.id) || null;
-    const cand = list.filter(t => t.status === 'done' && !sbPlayed.has(t.id));
-    for (const t of cand) {
-      const doneAt = t.done_at || t.updated_at;
-      const recent = doneAt && (now() - doneAt) <= 90e3;
-      const trans = sbPrev.get(t.id) && sbPrev.get(t.id) !== 'done';
-      if (recent || trans) {
-        sbLift.set(agentName, { id: t.id, until: now() + 3700 });
-        clearTimeout(sbLiftTimer.get(agentName));
-        sbLiftTimer.set(agentName, setTimeout(() => { sbPlayed.add(t.id); sbLift.delete(agentName); if (!busy) render(); }, 3800));
-        return t;
+  function specUrl(spec) {
+    const q = new URLSearchParams();
+    q.set('scene', spec.scene || 'stack');
+    q.set('mode', 'hold');
+    q.set('hud', '1');
+    if (spec.frame != null) q.set('frame', String(spec.frame));
+    else if (spec.mode === 'once') q.set('frame', '0');
+    if (spec.intro === 0) q.set('intro', '0');
+    if (spec.progress != null) q.set('progress', String(spec.progress));
+    return '/starbase/player.html?v=0.3.0&' + q.toString();
+  }
+  function clipKey(spec) { return StarbaseState.srcKey(spec); }
+  function defaultFeatured(agents) {
+    const live = (agents || []).filter(a => (a.tasks || []).some(t => t.status === 'in_progress' || t.status === 'blocked'));
+    if (live.length === 1) return live[0].name;
+    return '沃茲';
+  }
+  function featuredName(agents) {
+    const names = (agents || []).map(a => a.name);
+    const saved = featuredSaved();
+    if (saved && names.includes(saved)) return saved;
+    return names.includes(defaultFeatured(agents)) ? defaultFeatured(agents) : names[0];
+  }
+  function applySlots(agents, animate) {
+    const host = $('#sb-stage'); if (!host) return;
+    const feat = featuredName(agents);
+    const rest = (agents || []).map(a => a.name).filter(n => n !== feat);
+    const pads = [...host.querySelectorAll('.sb-pad')];
+    const first = animate && !reducedMotion() ? pads.map(el => el.getBoundingClientRect()) : null;
+    pads.forEach(el => {
+      el.classList.remove('featured', 'sub-1', 'sub-2');
+      if (el.dataset.agent === feat) {
+        el.classList.add('featured');
+        el.removeAttribute('role'); el.removeAttribute('tabindex'); el.removeAttribute('aria-label');
+      } else if (el.dataset.agent === rest[0]) {
+        el.classList.add('sub-1'); el.setAttribute('role', 'button'); el.tabIndex = 0;
+        el.setAttribute('aria-label', '把 ' + el.dataset.agent + ' 設為主角');
+      } else {
+        el.classList.add('sub-2'); el.setAttribute('role', 'button'); el.tabIndex = 0;
+        el.setAttribute('aria-label', '把 ' + el.dataset.agent + ' 設為主角');
       }
-      sbPlayed.add(t.id);
+    });
+    if (!first) return;
+    const last = pads.map(el => el.getBoundingClientRect());
+    pads.forEach((el, i) => {
+      const dx = first[i].left - last[i].left, dy = first[i].top - last[i].top;
+      const sx = last[i].width ? first[i].width / last[i].width : 1;
+      const sy = last[i].height ? first[i].height / last[i].height : 1;
+      if (!dx && !dy && Math.abs(sx - 1) < 0.01 && Math.abs(sy - 1) < 0.01) return;
+      el.style.transformOrigin = '0 0';
+      el.style.transition = 'none';
+      el.style.transform = 'translate(' + dx + 'px,' + dy + 'px) scale(' + sx + ',' + sy + ')';
+      requestAnimationFrame(() => {
+        el.style.transition = 'transform .45s ease';
+        el.style.transform = 'none';
+      });
+    });
+    const clr = e => {
+      if (e.propertyName !== 'transform') return;
+      pads.forEach(el => { el.style.transition = ''; el.style.transform = ''; el.style.transformOrigin = ''; });
+      host.removeEventListener('transitionend', clr);
+    };
+    host.addEventListener('transitionend', clr);
+  }
+  function setFeatured(name, animate) {
+    saveFeatured(name);
+    if (data && data.starbase) applySlots(data.starbase.agents, animate);
+  }
+  function setView(mode, animate) {
+    if (mode !== 'starbase') mode = 'tower';
+    try { localStorage.setItem(VIEW_KEY, mode); } catch {}
+    const tower = $('#view-tower'), sb = $('#view-starbase');
+    const apply = () => {
+      document.body.classList.toggle('mode-tower', mode === 'tower');
+      document.body.classList.toggle('mode-starbase', mode === 'starbase');
+      document.body.dataset.view = mode;
+      if (tower) { tower.inert = mode !== 'tower'; tower.setAttribute('aria-hidden', mode !== 'tower' ? 'true' : 'false'); }
+      if (sb) { sb.inert = mode !== 'starbase'; sb.setAttribute('aria-hidden', mode !== 'starbase' ? 'true' : 'false'); }
+      const title = mode === 'starbase' ? $('#sb-title') : $('#tower-title');
+      if (title) title.focus();
+      syncPlayback();
+    };
+    if (!animate || reducedMotion() || document.body.dataset.view === mode) {
+      document.body.classList.remove('flipping');
+      apply();
+      return;
     }
+    document.body.classList.add('flipping');
+    apply();
+    const onEnd = e => {
+      if (e.target !== tower && e.target !== sb) return;
+      if (e.propertyName !== 'transform') return;
+      document.body.classList.remove('flipping');
+      if (tower) tower.removeEventListener('transitionend', onEnd);
+      if (sb) sb.removeEventListener('transitionend', onEnd);
+    };
+    if (tower) tower.addEventListener('transitionend', onEnd);
+    if (sb) sb.addEventListener('transitionend', onEnd);
+    setTimeout(() => document.body.classList.remove('flipping'), 800);
+  }
+  function makeIframe(agent, buf) {
+    const f = document.createElement('iframe');
+    f.loading = 'lazy';
+    f.title = 'StarBase 動畫 · ' + agent;
+    f.tabIndex = -1;
+    f.setAttribute('aria-hidden', 'true');
+    f.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+    f.dataset.buf = buf;
+    f.src = 'about:blank';
+    return f;
+  }
+  function makePad(agent) {
+    const el = document.createElement('article');
+    el.className = 'sb-pad';
+    el.dataset.agent = agent.name;
+    el.innerHTML = `<div class="sb-visual"><div class="sb-scene"><div class="sb-hold-bar"></div><div class="sb-hold-tag">HOLD · 卡住</div><div class="sb-missing" hidden><strong>動畫檔未安裝</strong><span>把 01-stack.html／02-fuel.html／03-launch.html 放到 public/starbase/src/，再執行 node tools/extract-starbase.js</span></div></div></div>
+      <div class="sb-info">
+        <header class="sb-pad-head"><span class="nm"></span><span class="role"></span><span class="chip"></span></header>
+        <div class="sb-main-task"><span class="ttl"></span><span class="when"></span></div>
+        <p class="sb-note"></p><p class="sb-times"></p>
+        <ol class="sb-list"></ol>
+        <div class="sb-flown-lab">已升空</div>
+        <ol class="sb-flown"></ol>
+        <p class="sb-err" hidden></p>
+      </div>`;
+    const scene = el.querySelector('.sb-scene');
+    const a = makeIframe(agent.name, 'a');
+    const b = makeIframe(agent.name, 'b');
+    scene.insertBefore(b, scene.firstChild);
+    scene.insertBefore(a, scene.firstChild);
+    SB_PLAYERS.set(agent.name, { el, a, b, show: 'a', state: null, pending: null, swapOn: 'ready', wantPlay: false, missing: false });
+    el.addEventListener('click', e => {
+      if (el.classList.contains('featured')) return;
+      if (e.target.closest('a')) return;
+      setFeatured(el.dataset.agent, true);
+    });
+    el.addEventListener('keydown', e => {
+      if (el.classList.contains('featured')) return;
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setFeatured(el.dataset.agent, true); }
+    });
+    return el;
+  }
+  function driveIframe(p, iframe, st) {
+    const live = playersLive();
+    p.wantPlay = st.mode === 'once' || st.mode === 'loop';
+    if (!live || st.mode === 'hold') {
+      postIframe(iframe, { cmd: 'pause' });
+      if (st.mode === 'hold' && st.frame != null) postIframe(iframe, { cmd: 'seek', frame: st.frame });
+      return;
+    }
+    if (!p.wantPlay) return;
+    const sig = clipKey(st) + '|' + st.mode + '|' + (st.phase || '');
+    if (iframe.dataset.started === sig) { postIframe(iframe, { cmd: 'resume' }); return; }
+    iframe.dataset.started = sig;
+    postIframe(iframe, { cmd: 'play', once: st.mode === 'once', from: st.mode === 'once' ? (st.frame || 0) : undefined });
+  }
+  function loadClip(iframe, spec) {
+    const clip = clipKey(spec);
+    if (iframe.dataset.clip === clip) return false;
+    iframe.dataset.ready = '0';
+    iframe.dataset.ended = '0';
+    iframe.dataset.started = '';
+    iframe.dataset.clip = clip;
+    iframe.classList.remove('on');
+    iframe.src = specUrl(spec);
+    return true;
+  }
+  function blankIframe(iframe) {
+    iframe.classList.remove('on');
+    iframe.src = 'about:blank';
+    iframe.dataset.clip = '';
+    iframe.dataset.started = '';
+    iframe.dataset.ready = '0';
+    iframe.dataset.ended = '0';
+  }
+  function swapTo(p, buf) {
+    const nowI = p[buf];
+    const old = p[p.show];
+    nowI.classList.add('on');
+    if (old !== nowI) blankIframe(old);
+    p.show = buf;
+    if (p.state) driveIframe(p, nowI, p.state);
+    if (p.state && p.state.preload) {
+      const hid = p[p.show === 'a' ? 'b' : 'a'];
+      loadClip(hid, p.state.preload);
+    }
+  }
+  function applyPadPlayer(p, st) {
+    const prev = p.state;
+    p.state = st;
+    const scene = p.el.querySelector('.sb-scene');
+    if (scene) scene.classList.toggle('hold', !!(st.hold || st.grayscale));
+    if (p.missing) return;
+    const vis = p[p.show];
+    const hid = p[p.show === 'a' ? 'b' : 'a'];
+    const want = clipKey(st);
+    if (vis.dataset.clip === want && vis.dataset.ready === '1') {
+      driveIframe(p, vis, st);
+      if (st.preload) loadClip(hid, st.preload);
+      return;
+    }
+    if (hid.dataset.clip === want && hid.dataset.ready === '1') {
+      p.pending = st;
+      swapTo(p, p.show === 'a' ? 'b' : 'a');
+      return;
+    }
+    p.pending = st;
+    const visBusyOnce = vis.dataset.clip && vis.dataset.ready === '1' && vis.dataset.ended !== '1' && prev && prev.mode === 'once' && vis.dataset.clip !== want;
+    if (visBusyOnce) {
+      p.swapOn = 'ended';
+      loadClip(hid, st);
+      return;
+    }
+    p.swapOn = 'ready';
+    if (!vis.dataset.clip || vis.dataset.clip === want) loadClip(vis, st);
+    else loadClip(hid, st);
+  }
+  function syncPlayback() {
+    SB_PLAYERS.forEach(p => { if (p.state) driveIframe(p, p[p.show], p.state); });
+  }
+  function currentFrame(p) {
+    try {
+      const w = p[p.show].contentWindow;
+      if (w && w.__player && w.__player.getCurrentFrame) return w.__player.getCurrentFrame();
+    } catch (e) {}
     return null;
   }
-  const SB_CHIP = { queued: 'T- 待命', in_progress: '加注中', blocked: 'HOLD · 卡住', done: '已升空', empty: '待命' };
-  const SB_STAR_N = 36;
-  function sbStars(seed) {
-    let s = seed >>> 0, out = '';
-    for (let i = 0; i < SB_STAR_N; i++) {
-      s = (Math.imul(s, 1664525) + 1013904223) >>> 0; const x = s % 480;
-      s = (Math.imul(s, 1664525) + 1013904223) >>> 0; const y = s % 150;
-      s = (Math.imul(s, 1664525) + 1013904223) >>> 0;
-      const r = 0.22 + (s % 16) / 11;
-      const op = 0.28 + (s % 12) / 18;
-      out += `<circle class="sb-star t${(i % 3) + 1}" cx="${x}" cy="${y}" r="${r.toFixed(2)}" fill="#e8eef8" opacity="${op.toFixed(2)}"/>`;
-    }
-    return out;
+  function padTasks(name) {
+    const sb = data && data.starbase; if (!sb) return [];
+    const a = (sb.agents || []).find(x => x.name === name);
+    return a ? (a.tasks || []) : [];
   }
-  function sbX(x, y, w, h, n, stroke) {
-    let o = '';
-    const dy = h / n;
-    for (let i = 0; i < n; i++) {
-      const y0 = y + i * dy;
-      o += `<line x1="${x}" y1="${y0}" x2="${x + w}" y2="${y0 + dy}" stroke="${stroke}" stroke-width="1.15"/>`;
-      o += `<line x1="${x + w}" y1="${y0}" x2="${x}" y2="${y0 + dy}" stroke="${stroke}" stroke-width="1.15"/>`;
-    }
-    return o;
+  function onPlayerMsg(e) {
+    if (e.origin !== location.origin) return;
+    const d = e.data; if (!d || d.sb !== 1) return;
+    SB_PLAYERS.forEach(p => {
+      ['a', 'b'].forEach(buf => {
+        const f = p[buf];
+        if (f.contentWindow !== e.source) return;
+        if (d.ev === 'error') {
+          p.missing = true;
+          const miss = p.el.querySelector('.sb-missing');
+          if (miss) miss.hidden = false;
+          p.a.classList.remove('on');
+          p.b.classList.remove('on');
+          return;
+        }
+        if (d.ev === 'ready') {
+          f.dataset.ready = '1';
+          if (p.pending && clipKey(p.pending) === f.dataset.clip && (p.swapOn === 'ready' || p.show === buf)) swapTo(p, buf);
+          else if (!p[p.show].classList.contains('on') && p.state && clipKey(p.state) === f.dataset.clip) swapTo(p, buf);
+        }
+        if (d.ev === 'ended' && buf === p.show) {
+          f.dataset.ended = '1';
+          if (p.swapOn === 'ended' && p.pending) {
+            const hid = p[p.show === 'a' ? 'b' : 'a'];
+            if (hid.dataset.ready === '1' && clipKey(p.pending) === hid.dataset.clip) swapTo(p, p.show === 'a' ? 'b' : 'a');
+            else { p.swapOn = 'ready'; loadClip(hid, p.pending); }
+            refreshPadChrome(p, p.state);
+            return;
+          }
+          const st = StarbaseState.next({ prev: p.state, tasks: padTasks(p.el.dataset.agent), now: now(), reduced: reducedMotion(), event: 'ended' });
+          applyPadPlayer(p, st);
+          refreshPadChrome(p, st);
+        }
+      });
+    });
   }
-  function sbSky(id, seed) {
-    return `<defs>
-      <linearGradient id="${id}-sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#03050c"/><stop offset=".42" stop-color="#0c1730"/><stop offset=".72" stop-color="#1a2744"/><stop offset=".88" stop-color="#3a2a22"/><stop offset="1" stop-color="#1a1612"/></linearGradient>
-      <linearGradient id="${id}-hz" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb060" stop-opacity="0"/><stop offset=".35" stop-color="#ff9a4a" stop-opacity=".32"/><stop offset=".7" stop-color="#4a68a8" stop-opacity=".22"/><stop offset="1" stop-color="#1a1612" stop-opacity="0"/></linearGradient>
-      <linearGradient id="${id}-steel" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#5c636a"/><stop offset=".16" stop-color="#cfd5db"/><stop offset=".42" stop-color="#f7f8fa"/><stop offset=".7" stop-color="#b4bcc4"/><stop offset="1" stop-color="#4e555c"/></linearGradient>
-      <linearGradient id="${id}-white" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#b8b4a8"/><stop offset=".2" stop-color="#f4f1e6"/><stop offset=".55" stop-color="#fffdf6"/><stop offset="1" stop-color="#c4c0b4"/></linearGradient>
-      <radialGradient id="${id}-flood" cx=".5" cy="0" r="1"><stop offset="0" stop-color="#ffe08a" stop-opacity=".42"/><stop offset=".45" stop-color="#ffd48a" stop-opacity=".16"/><stop offset="1" stop-color="#ffd48a" stop-opacity="0"/></radialGradient>
-      <radialGradient id="${id}-mw" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#c8d4f0" stop-opacity=".16"/><stop offset="1" stop-color="#9bb4d8" stop-opacity="0"/></radialGradient>
-      <filter id="${id}-glow" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="2.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-      <filter id="${id}-soft" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="4"/></filter>
-    </defs>
-    <rect width="480" height="176" fill="url(#${id}-sky)"/>
-    <ellipse cx="236" cy="52" rx="210" ry="16" fill="url(#${id}-mw)" transform="rotate(-16 236 52)"/>
-    <ellipse cx="250" cy="58" rx="120" ry="9" fill="#c9a8e8" opacity=".05" transform="rotate(-16 250 58)"/>
-    ${sbStars(seed)}
-    <g class="sb-meteor"><line x1="0" y1="0" x2="34" y2="12" stroke="#f4f7ff" stroke-width="1.3"/><line x1="0" y1="0" x2="16" y2="6" stroke="#fff" stroke-width="2" opacity=".45"/></g>
-    <rect x="0" y="132" width="480" height="30" fill="url(#${id}-hz)"/>
-    <polygon points="18,18 78,162 8,162" fill="url(#${id}-flood)"/><polygon points="462,14 410,162 478,162" fill="url(#${id}-flood)"/>
-    <g class="sb-far" opacity=".9">
-      <rect x="388" y="104" width="26" height="50" rx="2" fill="#3a4048"/><ellipse cx="401" cy="104" rx="14" ry="6" fill="#4a515a"/>
-      <rect x="418" y="88" width="20" height="66" rx="2" fill="#32383f"/><ellipse cx="428" cy="88" rx="12" ry="5" fill="#4a515a"/>
-      <rect x="446" y="82" width="6" height="72" fill="#5a6570"/><circle cx="449" cy="78" r="8" fill="#cfd6dd" opacity=".32"/><circle cx="449" cy="78" r="2.4" fill="#ffd48a" class="sb-lite"/>
-      <path d="M356 150 L372 114 L388 150 Z" fill="#2e353c"/><circle cx="372" cy="110" r="8" fill="none" stroke="#8a949e" stroke-width="1.5"/>
-      <line x1="372" y1="102" x2="372" y2="118" stroke="#8a949e" stroke-width="1.1"/><line x1="364" y1="110" x2="380" y2="110" stroke="#8a949e" stroke-width="1.1"/>
-    </g>
-    <rect x="0" y="162" width="480" height="14" fill="#14110e"/><rect x="0" y="162" width="480" height="5" fill="#ffd48a" opacity=".1"/>
-    <rect x="0" y="161" width="480" height="2" fill="#4a4034"/>
-    <rect x="24" y="168" width="432" height="1" fill="#ffd48a" opacity=".32"/>
-    <rect x="48" y="172" width="70" height="2" fill="#c9bc98" opacity=".4"/><rect x="200" y="172" width="90" height="2" fill="#c9bc98" opacity=".4"/><rect x="360" y="172" width="70" height="2" fill="#c9bc98" opacity=".4"/>
-    <circle cx="22" cy="158" r="4" fill="#ffe08a" class="sb-lite"/><circle cx="458" cy="158" r="4" fill="#ffe08a" class="sb-lite"/>`;
+  function chipFor(st, main, lifting) {
+    if (st.hold || st.grayscale) return { cls: 'DIVERTED', txt: SB_CHIP.blocked };
+    if (st.phase === 'launch_once' || st.phase === 'reduced_launch') return { cls: 'TAKEOFF', txt: SB_CHIP.launch };
+    if (st.phase === 'stack_once') return { cls: 'TAKEOFF', txt: SB_CHIP.stack };
+    if (!main) return { cls: 'SCHEDULED', txt: SB_CHIP.empty };
+    if (main.status === 'in_progress') return { cls: 'TAKEOFF', txt: SB_CHIP.in_progress };
+    if (main.status === 'blocked') return { cls: 'DIVERTED', txt: SB_CHIP.blocked };
+    if (main.status === 'done' || lifting) return { cls: 'LANDED', txt: SB_CHIP.done };
+    return { cls: 'SCHEDULED', txt: SB_CHIP.queued };
   }
-  function sbStarship(id) {
-    const tx = 258, tw = 22;
-    return `<g class="sb-tower">
-      <rect x="${tx}" y="14" width="${tw}" height="148" fill="#4c5560"/>
-      <rect x="${tx - 3}" y="12" width="${tw + 6}" height="8" fill="#6a7480"/>
-      ${sbX(tx, 20, tw, 132, 8, '#2a3138')}
-      <line x1="${tx + tw / 2}" y1="4" x2="${tx + tw / 2}" y2="14" stroke="#d8dee4" stroke-width="1.6"/>
-      <circle class="sb-lite sb-beacon" cx="${tx + tw / 2}" cy="3.5" r="2.4" fill="#e23b2e"/>
-      <g class="sb-chop">
-        <rect x="224" y="16" width="12" height="142" rx="2" fill="#c5ccd3" stroke="#6a7178" stroke-width=".6"/>
-        <path d="M226 26 H168 v14 H226" fill="none" stroke="#d5dce2" stroke-width="7" stroke-linejoin="round"/>
-        <path d="M226 92 H162 v16 H226" fill="none" stroke="#b7bec6" stroke-width="8" stroke-linejoin="round"/>
-        <rect x="222" y="24" width="18" height="6" fill="#8b949e"/>
-        <rect x="222" y="96" width="18" height="6" fill="#8b949e"/>
-      </g>
-      <path d="M214 70 C214 70 200 78 186 78" fill="none" stroke="#c4a35a" stroke-width="2.2"/>
-      <path d="M214 110 C214 110 198 118 186 122" fill="none" stroke="#8a7a48" stroke-width="2"/>
-      <rect x="154" y="148" width="64" height="8" fill="#3a342c"/><rect x="158" y="146" width="56" height="4" fill="#5a5348"/>
-      <path d="M160 162 L168 148 M204 148 L212 162" stroke="#5a5348" stroke-width="3"/>
-      <path d="M170 162 L186 150 L202 162 Z" fill="#0a0806"/>
-    </g>
-    <ellipse class="sb-padglow" cx="186" cy="160" rx="42" ry="11" fill="#ff8a30" filter="url(#${id}-soft)" opacity=".0"/>
-    <g class="sb-rocket" filter="url(#${id}-glow)">
-      <path d="M186 6 L202 22 L170 22 Z" fill="url(#${id}-steel)" stroke="#8a9198" stroke-width=".5"/>
-      <rect x="170" y="22" width="32" height="48" fill="url(#${id}-steel)" stroke="#6a7178" stroke-width=".45"/>
-      <line x1="173" y1="24" x2="173" y2="68" stroke="#fff" stroke-width="1.3" opacity=".32"/>
-      <path d="M170 28 L160 38 L170 38 Z" fill="#9aa1a8"/><path d="M202 28 L212 38 L202 38 Z" fill="#9aa1a8"/>
-      <path d="M170 52 L158 64 L170 64 Z" fill="#8a9198"/><path d="M202 52 L214 64 L202 64 Z" fill="#8a9198"/>
-      <rect class="sb-frost" x="168" y="68" width="36" height="3.5" fill="#e8f2ff" opacity=".78"/>
-      <g class="sb-booster superheavy">
-        <rect x="162" y="70" width="48" height="80" rx="3" fill="url(#${id}-steel)" stroke="#6a7178" stroke-width=".55"/>
-        <rect x="166" y="82" width="40" height="2" fill="#6a7178" opacity=".45"/>
-        <rect x="166" y="108" width="40" height="2" fill="#6a7178" opacity=".45"/>
-        <rect x="166" y="132" width="40" height="2" fill="#6a7178" opacity=".45"/>
-        <line x1="166" y1="74" x2="166" y2="146" stroke="#fff" stroke-width="1.4" opacity=".28"/>
-      </g>
-      ${[170, 186, 202].map(x => `<ellipse cx="${x}" cy="152" rx="7" ry="4" fill="#1a1a1a"/>`).join('')}
-      <g class="sb-flame" transform="translate(186,154)">
-        <ellipse cx="0" cy="14" rx="16" ry="22" fill="#ff4a12" opacity=".85"/>
-        <ellipse cx="0" cy="16" rx="10" ry="18" fill="#ff9a2a"/>
-        <ellipse cx="0" cy="20" rx="5" ry="14" fill="#ffe08a"/>
-        <ellipse cx="0" cy="8" rx="8" ry="6" fill="#fff6d0" opacity=".8"/>
-      </g>
-    </g>`;
-  }
-  function sbFalcon(id) {
-    const grid = (x, y) => `<g transform="translate(${x},${y})">
-      <rect width="11" height="11" fill="#141414"/><path d="M0 2.7 H11 M0 5.5 H11 M0 8.3 H11 M2.7 0 V11 M5.5 0 V11 M8.3 0 V11" stroke="#9a9a9a" stroke-width=".55"/>
-    </g>`;
-    return `<g class="sb-tower">
-      <rect x="128" y="12" width="16" height="150" fill="#5a6570"/>
-      <rect x="124" y="10" width="24" height="8" fill="#6a7682"/>
-      ${sbX(128, 20, 16, 132, 8, '#2a3138')}
-      <line x1="136" y1="3" x2="136" y2="12" stroke="#d8dee4" stroke-width="1.5"/>
-      <circle class="sb-lite sb-beacon" cx="136" cy="2.8" r="2.3" fill="#e23b2e"/>
-      <rect class="sb-arm" x="144" y="58" width="56" height="5" fill="#c4a35a"/>
-      <rect x="194" y="54" width="8" height="13" fill="#8a7a48"/>
-      <path d="M200 67 C200 90 210 110 210 128" fill="none" stroke="#8a6a30" stroke-width="2"/>
-      <path d="M148 100 H200" stroke="#6a7a88" stroke-width="2"/>
-      <rect x="196" y="150" width="28" height="6" fill="#3a342c"/>
-      <path d="M198 162 L204 150 M216 150 L222 162" stroke="#5a5348" stroke-width="3"/>
-      <path d="M204 162 L210 152 L216 162 Z" fill="#0a0806"/>
-    </g>
-    <ellipse class="sb-padglow" cx="210" cy="160" rx="28" ry="10" fill="#ff8a30" filter="url(#${id}-soft)" opacity=".0"/>
-    <g class="sb-rocket" filter="url(#${id}-glow)">
-      <path d="M210 6 L220 24 L200 24 Z" fill="url(#${id}-white)" stroke="#c9c4b6" stroke-width=".45"/>
-      <rect x="200" y="24" width="20" height="38" fill="url(#${id}-white)"/>
-      <line x1="203" y1="26" x2="203" y2="60" stroke="#fff" stroke-width="1.2" opacity=".4"/>
-      <circle class="sb-lox-dot" cx="218" cy="28" r="2.2" fill="#d8e8f8" opacity=".8"/>
-      <rect x="200" y="62" width="20" height="12" fill="#141414"/>
-      <rect x="200" y="74" width="20" height="78" fill="url(#${id}-white)" stroke="#c9c4b6" stroke-width=".45"/>
-      ${grid(189, 76)}${grid(220, 76)}${grid(189, 90)}${grid(220, 90)}
-      <path d="M200 148 L188 160" stroke="#c9c4b6" stroke-width="2.4"/>
-      <path d="M220 148 L232 160" stroke="#c9c4b6" stroke-width="2.4"/>
-      <ellipse cx="210" cy="154" rx="8" ry="4" fill="#1a1a1a"/>
-      <g class="sb-flame" transform="translate(210,156)">
-        <ellipse cx="0" cy="14" rx="11" ry="20" fill="#ff4a12" opacity=".85"/>
-        <ellipse cx="0" cy="16" rx="7" ry="16" fill="#ff9a2a"/>
-        <ellipse cx="0" cy="20" rx="3.5" ry="12" fill="#ffe08a"/>
-      </g>
-    </g>`;
-  }
-  function sbMcgregor(id) {
-    return `<g class="sb-stand">
-      <rect x="32" y="70" width="20" height="92" fill="#5a5348"/>
-      <rect x="70" y="28" width="12" height="134" fill="#6a6e72"/><rect x="268" y="28" width="12" height="134" fill="#6a6e72"/>
-      <rect x="70" y="28" width="210" height="12" fill="#8a8e92"/>
-      ${sbX(82, 40, 186, 100, 5, '#4a4e52')}
-      <line x1="76" y1="4" x2="76" y2="28" stroke="#d8dee4" stroke-width="1.5"/>
-      <circle class="sb-lite sb-beacon" cx="76" cy="3" r="2.3" fill="#e23b2e"/>
-      <rect x="64" y="150" width="224" height="12" fill="#3a342c"/>
-      <path d="M280 118 L458 118 L458 162 L280 162 Z" fill="#2a241c"/>
-      <rect x="280" y="118" width="178" height="5" fill="#4a4034"/>
-      <circle cx="40" cy="166" r="7" fill="#222"/><circle cx="56" cy="166" r="7" fill="#222"/>
-    </g>
-    <ellipse class="sb-padglow" cx="300" cy="140" rx="50" ry="14" fill="#ff8a30" filter="url(#${id}-soft)" opacity=".0"/>
-    <g class="sb-rocket sb-engine" filter="url(#${id}-glow)">
-      <rect x="96" y="78" width="120" height="32" rx="5" fill="url(#${id}-steel)" stroke="#6a7178" stroke-width=".7"/>
-      <rect x="108" y="84" width="22" height="20" fill="#3a3e42"/>
-      <circle cx="119" cy="94" r="7" fill="#1a1a1a"/>
-      <line x1="100" y1="82" x2="210" y2="82" stroke="#fff" stroke-width="1.2" opacity=".3"/>
-      <path class="sb-bell" d="M216 72 L278 56 L278 132 L216 116 Z" fill="#2e3236" stroke="#1a1a1a" stroke-width=".7"/>
-      <ellipse cx="278" cy="94" rx="6" ry="28" fill="#1a1a1a"/>
-      <circle cx="112" cy="150" r="8" fill="#222"/><circle cx="168" cy="150" r="8" fill="#222"/>
-      <g class="sb-flame" transform="translate(278,94)">
-        <ellipse cx="48" cy="0" rx="48" ry="18" fill="#ff4a12" opacity=".85"/>
-        <ellipse cx="62" cy="0" rx="38" ry="11" fill="#ff9a2a"/>
-        <ellipse cx="78" cy="0" rx="28" ry="6" fill="#ffe08a"/>
-        <ellipse cx="20" cy="0" rx="14" ry="10" fill="#fff6d0" opacity=".7"/>
-      </g>
-    </g>`;
-  }
-  const SB_VEH = { starship: sbStarship, falcon9: sbFalcon, mcgregor: sbMcgregor };
-  function sbMini() {
-    return `<svg class="sb-mini" viewBox="0 0 10 16" aria-hidden="true"><path d="M5 1 L8 5 L8 13 L2 13 L2 5 Z" fill="#6b675a"/><rect x="3" y="13" width="4" height="2" fill="#8a5a00"/></svg>`;
-  }
-  function sbTaskRow(t, isMain) {
+  function sbTaskRow(t) {
     const stClass = t.status === 'in_progress' ? 'TAKEOFF' : t.status === 'blocked' ? 'DIVERTED' : t.status === 'done' ? 'LANDED' : 'SCHEDULED';
-    const mini = !isMain && t.status !== 'done' ? sbMini() : '';
-    const chip = `<span class="sb-left">${mini}<span class="chip st-${stClass}">${esc(t.statusZh || SB_CHIP[t.status] || t.status)}</span></span>`;
+    const chip = `<span class="chip st-${stClass}">${esc(t.statusZh || SB_CHIP[t.status] || t.status)}</span>`;
     const tip = esc(t.task) + (t.note ? ' — ' + esc(t.note) : '');
     const title = t.link
       ? `<a class="ttl" href="${esc(t.link)}" target="_blank" rel="noopener" title="${tip}">${esc(t.task)}</a>`
       : `<span class="ttl" title="${tip}">${esc(t.task)}</span>`;
     const whenT = t.status === 'done' ? (t.done_at || t.updated_at) : (t.started_at || t.updated_at);
-    return `<li class="sb-task ${t.status}${isMain ? ' main' : ''}" title="${tip}">${chip}${title}<span class="when" data-sb-elapsed="${whenT || ''}">${sbAgo(whenT)}</span></li>`;
+    return `<li class="sb-task ${t.status}">${chip}${title}<span class="when" data-sb-elapsed="${whenT || ''}">${sbAgo(whenT)}</span></li>`;
   }
-  function sbPad(agent) {
+  function refreshPadChrome(p, st) {
+    if (!p || !p.el) return;
+    const sb = data && data.starbase;
+    const agent = (sb && (sb.agents || []).find(x => x.name === p.el.dataset.agent))
+      || { name: p.el.dataset.agent, tasks: padTasks(p.el.dataset.agent) };
+    updatePadInfo(p.el, agent, st || p.state);
+  }
+  function updatePadInfo(el, agent, st) {
     const tasks = agent.tasks || [];
-    const lifting = sbLiftTask(agent.name, tasks);
-    const main = lifting || sbMain(tasks);
-    const state = lifting ? 'liftoff' : !main ? 'empty' : main.status === 'in_progress' ? 'fueling' : main.status === 'blocked' ? 'hold' : main.status === 'queued' ? 'queued' : 'empty';
-    const chipKind = lifting ? 'TAKEOFF' : !main ? 'SCHEDULED' : main.status === 'in_progress' ? 'TAKEOFF' : main.status === 'blocked' ? 'DIVERTED' : 'SCHEDULED';
-    const chipTxt = lifting ? '升空' : SB_CHIP[main ? main.status : 'empty'];
-    const live = tasks.filter(t => t.status !== 'done');
-    const flown = tasks.filter(t => t.status === 'done' && !(lifting && t.id === lifting.id));
+    const lifting = st.phase === 'launch_once' || st.phase === 'reduced_launch';
+    const main = lifting ? tasks.filter(t => t.status === 'done').sort((a, b) => (b.done_at || b.updated_at || 0) - (a.done_at || a.updated_at || 0))[0] : sbMain(tasks);
+    const chip = chipFor(st, main, lifting);
+    el.querySelector('.nm').textContent = agent.name;
+    el.querySelector('.role').textContent = agent.role || '';
+    const chipEl = el.querySelector('.sb-pad-head .chip');
+    chipEl.className = 'chip st-' + chip.cls;
+    chipEl.textContent = chip.txt;
+    const box = el.querySelector('.sb-main-task');
+    const ttl = box.querySelector('.ttl');
+    const when = box.querySelector('.when');
+    if (main) {
+      const tip = main.task + (main.note ? ' — ' + main.note : '');
+      if (main.link) {
+        if (ttl.tagName !== 'A') {
+          const a = document.createElement('a'); a.className = 'ttl'; ttl.replaceWith(a);
+        }
+        const a = box.querySelector('.ttl');
+        a.href = main.link; a.target = '_blank'; a.rel = 'noopener'; a.title = tip; a.textContent = main.task;
+      } else {
+        if (ttl.tagName === 'A') {
+          const s = document.createElement('span'); s.className = 'ttl'; ttl.replaceWith(s);
+        }
+        const s = box.querySelector('.ttl'); s.removeAttribute('href'); s.title = tip; s.textContent = main.task;
+      }
+      const whenT = main.status === 'done' ? (main.done_at || main.updated_at) : (main.started_at || main.updated_at);
+      when.dataset.sbElapsed = whenT || '';
+      when.textContent = sbAgo(whenT);
+    } else {
+      if (ttl.tagName === 'A') { const s = document.createElement('span'); s.className = 'ttl'; ttl.replaceWith(s); }
+      box.querySelector('.ttl').textContent = '發射台待命';
+      when.textContent = ''; when.dataset.sbElapsed = '';
+    }
+    const note = el.querySelector('.sb-note');
+    note.textContent = main && main.note ? main.note : '';
+    const times = el.querySelector('.sb-times');
+    if (main) {
+      const bits = [];
+      if (main.started_at) bits.push('經過 ' + sbAgo(main.started_at));
+      if (main.updated_at) bits.push('更新 ' + sbAgo(main.updated_at));
+      times.textContent = bits.join(' · ');
+    } else times.textContent = '';
+    const live = tasks.filter(t => t.status !== 'done' && (!main || t.id !== main.id));
+    el.querySelector('.sb-list').innerHTML = live.map(sbTaskRow).join('');
     const hideH = (data.starbase && data.starbase.hideHours) || 6;
-    const flownShow = flown.filter(t => {
+    const flown = tasks.filter(t => t.status === 'done' && !(lifting && main && t.id === main.id)).filter(t => {
       const t0 = t.done_at || t.updated_at; return !t0 || (now() - t0) <= hideH * 3600e3;
     });
-    const id = 'sb-' + agent.vehicle;
-    const veh = (SB_VEH[agent.vehicle] || sbStarship)(id);
-    const seed = agent.vehicle === 'starship' ? 7 : agent.vehicle === 'falcon9' ? 19 : 31;
-    const fuelStart = main && main.status === 'in_progress' ? (main.started_at || now()) : '';
-    const liveRows = [];
-    if (main && !lifting) liveRows.push(sbTaskRow(main, true));
-    live.filter(t => !main || t.id !== main.id).forEach(t => liveRows.push(sbTaskRow(t, false)));
-    const extraN = Math.max(0, liveRows.length - 1);
-    const shownLive = liveRows.slice(0, 1);
-    tasks.forEach(t => sbPrev.set(t.id, t.status));
-    return `<article class="sb-pad" data-agent="${esc(agent.name)}">
-      <header class="sb-pad-head"><span class="nm">${esc(agent.name)}</span><span class="role">${esc(agent.role || '')}</span>
-        <span class="chip st-${chipKind}">${esc(chipTxt)}</span><span class="count">${live.length}</span></header>
-      <div class="sb-scene ${esc(agent.vehicle)} ${state}">
-        <svg viewBox="0 0 480 176" preserveAspectRatio="xMidYMax meet" aria-hidden="true">${sbSky(id, seed)}${veh}</svg>
-        <div class="sb-flash"></div>
-        <div class="sb-steam"><i></i><i></i><i></i><i></i><i></i><i></i></div>
-        <div class="sb-steam-hi"><i></i><i></i></div>
-        <div class="sb-lox"><i></i><i></i></div>
-        <div class="sb-plume"></div>
-        <div class="sb-fuel" data-sb-fuel="${fuelStart}" style="--p:18%"><span>加注中</span><i class="sb-fuel-bar"><b></b></i></div>
-        <div class="sb-hold-bar"></div><div class="sb-hold-tag">HOLD · 卡住</div>
-        <div class="sb-empty">發射台待命</div>
-      </div>
-      ${agent.error ? `<p class="sb-err">讀檔容錯：${esc(agent.error)}</p>` : ''}
-      <div class="sb-lists">
-        <ol class="sb-list">${shownLive.join('')}</ol>
-        ${extraN ? `<div class="sb-more">＋${extraN}</div>` : ''}
-        ${flownShow.length ? `<div class="sb-flown-lab">已升空</div><ol class="sb-flown">${flownShow.map(t => sbTaskRow(t, false)).join('')}</ol>` : ''}
-      </div>
-    </article>`;
+    el.querySelector('.sb-flown-lab').hidden = !flown.length;
+    el.querySelector('.sb-flown').innerHTML = flown.map(sbTaskRow).join('');
+    const err = el.querySelector('.sb-err');
+    if (agent.error) { err.hidden = false; err.textContent = '讀檔容錯：' + agent.error; }
+    else { err.hidden = true; err.textContent = ''; }
   }
   function renderStarbase() {
     const sb = data && data.starbase;
-    const host = $('#sb-pads'); if (!host) return;
-    if (!sb || !sb.agents) { host.innerHTML = ''; $('#sb-count').textContent = '0'; return; }
+    const host = $('#sb-stage'); if (!host) return;
+    if (!sb || !sb.agents) { host.innerHTML = ''; SB_PLAYERS.clear(); const c = $('#sb-count'); if (c) c.textContent = '0'; return; }
     const n = sb.agents.reduce((s, a) => s + ((a.tasks || []).filter(t => t.status !== 'done').length), 0);
-    $('#sb-count').textContent = n;
-    host.innerHTML = sb.agents.map(sbPad).join('');
+    const cnt = $('#sb-count'); if (cnt) cnt.textContent = n;
+    const have = new Set();
+    sb.agents.forEach(a => {
+      have.add(a.name);
+      if (!host.querySelector('.sb-pad[data-agent="' + CSS.escape(a.name) + '"]')) host.appendChild(makePad(a));
+    });
+    [...host.querySelectorAll('.sb-pad')].forEach(el => {
+      if (!have.has(el.dataset.agent)) { SB_PLAYERS.delete(el.dataset.agent); el.remove(); }
+    });
+    applySlots(sb.agents, false);
+    sb.agents.forEach(a => {
+      const p = SB_PLAYERS.get(a.name); if (!p) return;
+      const st = StarbaseState.next({ prev: p.state, tasks: a.tasks || [], now: now(), reduced: reducedMotion(), event: 'tick', frame: currentFrame(p) });
+      applyPadPlayer(p, st);
+      updatePadInfo(p.el, a, st);
+    });
   }
 
   // ---------- render ----------
@@ -511,7 +622,6 @@
   // ---------- filters / toggles / expand ----------
   function saveFilt() { localStorage.setItem('tower.filter', JSON.stringify(filt)); render(); }
   { const m = $('#manual-sec'); try { m.open = localStorage.getItem('tower.manualOpen') === '1'; } catch {} m.addEventListener('toggle', () => { try { localStorage.setItem('tower.manualOpen', m.open ? '1' : '0'); } catch {} }); }
-  { const btn = $('#sb-toggle'); if (btn) btn.addEventListener('click', () => setSbOpen(!sbOpen())); setSbOpen(sbOpen()); }
   $('#f-q').value = filt.q;
   $('#f-q').addEventListener('input', e => { filt.q = e.target.value; saveFilt(); });
   $('#f-ms').addEventListener('change', e => { filt.ms = e.target.value; saveFilt(); });
@@ -730,6 +840,13 @@
   });
 
   setInterval(() => { if (!busy && pendingRender) render(); }, 500);
+  window.addEventListener('message', onPlayerMsg);
+  document.addEventListener('visibilitychange', syncPlayback);
+  { const t = $('#tower-title'); if (t) t.addEventListener('click', () => setView('starbase', true)); }
+  { const t = $('#sb-title'); if (t) t.addEventListener('click', () => setView('tower', true)); }
+  setView(viewMode(), false);
+  { const mq = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null;
+    if (mq) { const fn = () => { if (data) renderStarbase(); }; mq.addEventListener ? mq.addEventListener('change', fn) : mq.addListener(fn); } }
   load(); if (!FROZEN) setInterval(load, POLL);
   tick();
 })();

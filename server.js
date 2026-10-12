@@ -495,7 +495,7 @@ if (!CFG.demo) ISSUES.refreshIssues(true).catch(() => {});
 
 // ---------- http ----------
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png' };
-function send(res, code, body, type) { res.writeHead(code, { 'Content-Type': type || 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' }); res.end(body); }
+function send(res, code, body, type, cache) { res.writeHead(code, { 'Content-Type': type || 'application/json; charset=utf-8', 'Cache-Control': cache || 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' }); res.end(body); }
 const ALLOWED_HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
 const ALLOWED_ORIGINS = new Set([`http://127.0.0.1:${PORT}`, `http://localhost:${PORT}`]);
 function guard(req) { // mutating endpoints: session token + same-origin + loopback host (blocks CSRF / DNS rebinding)
@@ -590,7 +590,8 @@ const server = http.createServer(async (req, res) => {
   fs.readFile(f, (err, data) => {
     if (err) return send(res, 404, 'not found', 'text/plain');
     if (f.endsWith('index.html')) data = Buffer.from(data.toString('utf8').replace('__TOWER_TOKEN__', TOKEN).replace('__TOWER_DEMO__', CFG.demo ? '1' : ''));
-    send(res, 200, data, MIME[path.extname(f)] || 'application/octet-stream');
+    const cache = p.startsWith('/starbase/') ? 'public, max-age=86400' : 'no-store';
+    send(res, 200, data, MIME[path.extname(f)] || 'application/octet-stream', cache);
   });
 });
 server.listen(PORT, HOST, () => console.log(`[tower] ${new Date().toISOString()} listening http://${HOST}:${PORT} config=${path.basename(CFG._file)}${CFG.demo ? ' DEMO' : ''}`));

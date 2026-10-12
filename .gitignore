@@ -12,3 +12,6 @@ tower.pid
 *.tmp
 node_modules/
 prompt-template.*.local.md
+# Remotion Player bundle — not OSI-licensed; keep local, do not publish
+public/starbase/starbase.js
+public/starbase/src/

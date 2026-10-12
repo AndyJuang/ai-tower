@@ -13,7 +13,14 @@ function fail(msg) { failed++; console.error('FAIL ' + msg); }
 function ok(msg) { console.log('PASS ' + msg); }
 
 function syntax() {
-  const files = [path.join(ROOT, 'server.js'), path.join(ROOT, 'public', 'app.js')];
+  const files = [
+    path.join(ROOT, 'server.js'),
+    path.join(ROOT, 'public', 'app.js'),
+    path.join(ROOT, 'public', 'starbase-state.js'),
+    path.join(ROOT, 'public', 'starbase', 'bridge.js'),
+  ];
+  const tools = path.join(ROOT, 'tools');
+  if (fs.existsSync(tools)) for (const f of fs.readdirSync(tools)) if (f.endsWith('.js')) files.push(path.join(tools, f));
   for (const f of fs.readdirSync(path.join(ROOT, 'lib'))) if (f.endsWith('.js')) files.push(path.join(ROOT, 'lib', f));
   for (const f of fs.readdirSync(path.join(ROOT, 'tests'))) if (f.endsWith('.js')) files.push(path.join(ROOT, 'tests', f));
   for (const f of files) {
@@ -28,7 +35,7 @@ function nopath() {
   const skip = new Set(['docs/STARBASE_PROGRESS.md', 'GATES.md']);
   function walk(dir, rel) {
     for (const name of fs.readdirSync(dir)) {
-      if (name === '.git' || name === 'node_modules' || name === 'data') continue;
+      if (name === '.git' || name === 'node_modules' || name === 'data' || name === 'animations') continue;
       const p = path.join(dir, name); const r = rel ? rel + '/' + name : name;
       const st = fs.statSync(p);
       if (st.isDirectory()) walk(p, r);
@@ -46,8 +53,11 @@ function nopath() {
 function get(url, host) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
-    const req = http.request({ hostname: u.hostname, port: u.port, path: u.pathname, headers: { Host: host || u.host } }, res => {
-      let b = ''; res.on('data', d => b += d); res.on('end', () => resolve({ status: res.statusCode, body: b, headers: res.headers }));
+    const req = http.request({ hostname: u.hostname, port: u.port, path: u.pathname + u.search, headers: { Host: host || u.host } }, res => {
+      const chunks = []; res.on('data', d => chunks.push(d)); res.on('end', () => {
+        const buf = Buffer.concat(chunks);
+        resolve({ status: res.statusCode, body: buf.toString('utf8'), buffer: buf, headers: res.headers });
+      });
     });
     req.on('error', reject); req.end();
   });
@@ -94,8 +104,36 @@ async function api() {
     const sj = JSON.parse(strips.body);
     if (!sj.starbase || !sj.starbase.agents) fail('/api/strips missing starbase'); else ok('/api/strips has starbase');
     const html = await get('http://127.0.0.1:4790/', '127.0.0.1:4790');
-    if (!/id="starbase"/.test(html.body)) fail('HTML missing StarBase block'); else ok('HTML has StarBase block');
-    if (!/v0\.2\.1/.test(html.body)) fail('HTML missing v0.2.1'); else ok('HTML has v0.2.1');
+    if (!/id="view-tower"/.test(html.body) || !/id="view-starbase"/.test(html.body)) fail('HTML missing two views'); else ok('HTML has Tower/StarBase views');
+    if (!/v0\.3\.0/.test(html.body)) fail('HTML missing v0.3.0'); else ok('HTML has v0.3.0');
+    if (/id="sb-toggle"/.test(html.body)) fail('old sb-toggle still in HTML'); else ok('no overlay toggle');
+    const johnny = j.agents.find(a => a.name === '強尼');
+    const recent = johnny && (johnny.tasks || []).find(t => t.status === 'done' && t.done_at && (Date.now() - t.done_at) < 60e3);
+    if (!recent) fail('demo 強尼 missing recent done_at'); else ok('demo 強尼 recent done');
+    const player = await get('http://127.0.0.1:4790/starbase/player.html', '127.0.0.1:4790');
+    if (player.status !== 200) fail('player.html ' + player.status); else ok('player.html 200');
+    if (!/onerror/.test(player.body)) fail('player.html missing onerror'); else ok('player.html onerror');
+    const hasBundle = fs.existsSync(path.join(ROOT, 'public', 'starbase', 'starbase.js'));
+    const bundle = await get('http://127.0.0.1:4790/starbase/starbase.js', '127.0.0.1:4790');
+    if (!hasBundle) {
+      if (bundle.status !== 404) fail('starbase.js missing should 404 got ' + bundle.status);
+      else { ok('starbase.js 404 when missing'); console.log('SKIP starbase.js cache/size (not installed)'); }
+    } else {
+      const cc = String((bundle.headers && (bundle.headers['cache-control'] || bundle.headers['Cache-Control'])) || '');
+      if (bundle.status !== 200) fail('starbase.js ' + bundle.status);
+      else if (!/public/.test(cc) || !/max-age=86400/.test(cc)) fail('starbase.js Cache-Control ' + cc);
+      else if (bundle.buffer.length < 400000 || bundle.buffer.length > 700000) fail('starbase.js size ' + bundle.buffer.length);
+      else ok('starbase.js cached public ~514KB (' + bundle.buffer.length + ')');
+    }
+    const gone = await get('http://127.0.0.1:4790/starbase/__missing__.js', '127.0.0.1:4790');
+    if (gone.status !== 404) fail('missing /starbase/ file ' + gone.status);
+    else ok('missing /starbase/ file is 404');
+    const still = await get('http://127.0.0.1:4790/api/starbase', '127.0.0.1:4790');
+    if (still.status !== 200) fail('server hung after 404'); else ok('server still up after 404');
+    const br = await get('http://127.0.0.1:4790/starbase/bridge.js', '127.0.0.1:4790');
+    if (br.status !== 200 || !/e\.origin/.test(br.body)) fail('bridge.js'); else ok('bridge.js 200');
+    const st = await get('http://127.0.0.1:4790/starbase-state.js', '127.0.0.1:4790');
+    if (st.status !== 200 || !/StarbaseState/.test(st.body)) fail('starbase-state.js'); else ok('starbase-state.js 200');
     const bad = await get('http://127.0.0.1:4790/api/starbase', 'example.com');
     if (bad.status !== 421) fail('host guard ' + bad.status); else ok('host guard 421');
   } catch (e) { fail('demo api ' + e.message); }

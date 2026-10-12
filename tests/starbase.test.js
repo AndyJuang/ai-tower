@@ -22,6 +22,15 @@ check('parse single object', () => {
   assert.equal(t[0].link, 'https://github.com/AndyJuang/ai-tower');
 });
 
+check('progress number is kept', () => {
+  const t = sb.parsePayload({ task: 'P', status: '進行中', progress: 0.55 }, '沃茲');
+  assert.equal(t[0].progress, 0.55);
+  const t2 = sb.parsePayload({ task: 'P', status: '進行中', progress: 80 }, '沃茲');
+  assert.equal(t2[0].progress, 80);
+  const t3 = sb.parsePayload({ task: 'P', status: '排隊' }, '沃茲');
+  assert.equal(t3[0].progress, null);
+});
+
 check('parse array', () => {
   const t = sb.parsePayload([
     { task: 'A', status: '排隊' },

@@ -1,4 +1,4 @@
-# AI Tower ✈ `v0.2.1`
+# AI Tower ✈ `v0.3.0`
 
 **A local control tower for background AI coding agents** — shows every agent job as a retro flight strip and lets you dispatch GitHub issues to agents (Grok CLI, Claude Code, Codex CLI, Antigravity) with one **Takeoff** button.
 
@@ -27,9 +27,9 @@ Agents are shown as airlines — **GK Grok Air**, **CL Claude Airways**, **CX Co
 | **TAKEOFF** | agent process running now, live elapsed timer |
 | **GOOD DAY** | finished (READY TO MERGE) · STOPPED (intentional, grey) · **DIVERTED** (abnormal exit, red, plus an alert row). **✕ 已知道** hides a card (5 s undo, kept in `data/dismissed.json`); every card auto-hides after `goodDayHideHours` (default 6) |
 
-Above the four bays, **StarBase** (v0.2.1) shows three DEV Grok Bot pads — 沃茲 (Starship / desktop), 克雷格 (Falcon 9 / iPhone·iPad), 強尼 (McGregor stand / design). Other agents are ignored. See [StarBase](#starbase).
+Click the **AI TOWER** title to flip to **StarBase** (v0.3.0), a full-screen launch complex for the three DEV Grok Bot pads — 沃茲, 克雷格, 強尼. Other agents are ignored. All three pads play the same Starship animation; agent name, role and status sit in the chrome around it. See [StarBase](#starbase).
 
-v0.2.1 — StarBase visuals: bigger rockets, lattice towers, stars, glow, fueling vapor.
+v0.3.0 — StarBase uses Andy's three Remotion scenes (stack / fuel / launch), two full-screen views, and a featured-agent layout.
 
 Flight number = airline code + the line's **primary issue** (first `#N` in its runner-table comment, else in its progress file); other issues show as blue tags.
 
@@ -65,7 +65,7 @@ cp examples/runner.example.sh <logsDir>/runner.sh
 | `agentBins`, `modelCatalog` | optional CLI paths and a static model/effort list per lane (overrides discovery) |
 | `manualIssueRegex`, `manualSectionTitle` | issues that need a real device (matched on labels and the start of the title) and the PARK section title |
 | `goodDayHideHours`, `landedKeepMin` | GOOD DAY auto-hide (default 6 h) and when LANDED cards dim (30 min). StarBase “已升空” uses the same hide window |
-| `starbaseDir`, `starbaseAgents` | StarBase status directory (default `{logsDir}/starbase/agents`) and the three pads (`name` / `role` / `vehicle`: `starship` · `falcon9` · `mcgregor`) |
+| `starbaseDir`, `starbaseAgents` | StarBase status directory (default `{logsDir}/starbase/agents`) and the three pads (`name` / `role` / `vehicle`). `vehicle` is kept on the config object; the UI plays one Starship animation for every agent |
 | `doneRegex`, `stopByNames`, `tzLabel`, `cutoffHour`, `launchPrefix` | progress "done" marker, who counts as an intentional stop, clock label, runner cutoff hour, launch prefix (default `nice -n 10` [+ `caffeinate -i` on macOS]) |
 
 Local state (`data/`: lane order, settings, issue cache, dispatched list) is gitignored. `titles.json` (optional) maps line/branch → friendly title.
@@ -84,28 +84,37 @@ Local state (`data/`: lane order, settings, issue cache, dispatched list) is git
 
 ### StarBase
 
-A night launch complex above the airport board. Each of the three agents is a pad; each task is a rocket.
+A full-screen night launch complex. Click **AI TOWER** in the header to flip up into it; click **StarBase 發射場** to flip back. The last view is stored as `tower.view`. `prefers-reduced-motion` skips the flip.
 
-| Agent | Role | Vehicle |
-|---|---|---|
-| 沃茲 | desktop app | Starship (stainless Super Heavy + ship, chopsticks) |
-| 克雷格 | iPhone / iPad app | Falcon 9 (white two-stage, black interstage, grid fins, umbilical tower) |
-| 強尼 | design | McGregor engine stand (steel gantry, nozzle, test cart) |
+The featured pad is large (8:3 animation plus task detail). The other two sit in a row below. Click a lower pad to FLIP it into the featured slot (`tower.sbFeatured`). Default featured: the agent with an in-progress or blocked task, or 沃茲 if several or none.
 
-| Task status | Pad |
+All three agents play the **same Starship** Remotion animation (Super Heavy + ship, OLM-A, chopsticks). There is no Falcon 9 / McGregor variant and no per-agent vehicle switch. Name, role and status chips are UI chrome around the player.
+
+| Agent | Role |
 |---|---|
-| 排隊 / `queued` / `ready` | rocket on the pad, **T- 待命** |
-| 進行中 / `in_progress` / `running` | fueling: steam, fuel bar, blinking tower lights |
-| 卡住 / `blocked` | **HOLD · 卡住**, steam off |
-| 完成 / `done` | one liftoff (if `done_at` is within 90 s, or the page just saw it finish), then **已升空**. Hidden after `goodDayHideHours` (default 6 h) |
+| 沃茲 | desktop app |
+| 克雷格 | iPhone / iPad app |
+| 強尼 | design |
+
+| Task status | Scene |
+|---|---|
+| idle (queued only, or no live task) | 01 stack, paused at frame 12 |
+| task just started (queued→in_progress, or new in_progress with `started_at` within 90 s) | 01 plays once → 02 from 0 (3 s intro) → 02 loops 90–389 |
+| already in_progress on page load | 02 `intro=0` loop |
+| in_progress | 02 loop. Optional task `progress` (0–1 or 0–100) becomes `?progress=` clamped to 0.05–0.98 |
+| blocked | 02 paused (frame 240 if that is how the page loaded) + grayscale + **HOLD · 卡住**. Blocked→in_progress resumes |
+| done (`done_at` within 90 s, or the page just saw in_progress/blocked→done) | 03 plays once (26 s) → idle 01@12. The task then sits in **已升空** until `goodDayHideHours` |
+| queue combos | 01 playing then the task finishes → 01 ends, skip 02, play 03. 03 playing then a new in_progress → 03 ends, then 01→02 |
+| `prefers-reduced-motion` | all still: idle 01@12; in_progress 02@240; blocked 02@240 + HOLD; done 03@640 for 6 s then idle |
 
 Status files are written by the agents themselves. The tower only reads them.
 
 - Path: `starbaseDir` / `<agent>.json` (default `{logsDir}/starbase/agents/沃茲.json` …).
 - Shape: one object, an array, or `{ "tasks": [...] }`.
-- Fields: `agent`, `task`, `status`, `started_at`, `updated_at`, `done_at`, `link` (http/https only), `note`.
+- Fields: `agent`, `task`, `status`, `started_at`, `updated_at`, `done_at`, `link` (http/https only), `note`, optional `progress`.
 - A half-written / invalid JSON file keeps the last good read; a missing file means no tasks.
 - Read-only API: `GET /api/starbase` (same host guard, `no-store`). The same payload is on `/api/strips` as `starbase`, so the page does not need a second poll.
+- Animation player: `/starbase/player.html` + shared `/starbase/starbase.js` (Cache-Control: public, 1 day). The Remotion Player bundle is **not in this repo** ([Remotion License](https://www.remotion.dev/license) is not OSI open source and is incompatible with this MIT project). Put `01-stack.html` / `02-fuel.html` / `03-launch.html` in `public/starbase/src/` (gitignored) and run `node tools/extract-starbase.js` to write `public/starbase/starbase.js` (also gitignored). Without those files the pads show a static “動畫檔未安裝” placeholder; chips, HOLD, and featured switching still work.
 
 Helper (atomic write, upsert by task title):
 
@@ -133,9 +142,9 @@ AI Tower 是一個本機「塔台」：把背景跑的 AI 寫程式代理（Grok
 | **TAKEOFF 飛行中** | agent 程序正在跑，即時計時 |
 | **GOOD DAY 已落地** | 完成（READY TO MERGE／可整合）、STOPPED（刻意停止，灰）、**DIVERTED**（異常結束，紅＋警示列）。按 **✕ 已知道** 可隱藏（5 秒內可撤銷，記在 `data/dismissed.json`）；超過 `goodDayHideHours`（預設 6 小時）自動隱藏 |
 
-最上層 **StarBase**（v0.2.1）只顯示三位 DEV Grok Bot：沃茲（Starship／桌面 App）、克雷格（Falcon 9／iPhone·iPad）、強尼（麥格雷戈測試平台／設計）。其他 agent 忽略。見下方「StarBase」。
+點 header 的 **AI TOWER** 標題會翻到全螢幕 **StarBase**（v0.3.0），只顯示三位 DEV Grok Bot：沃茲、克雷格、強尼。其他 agent 忽略。三位都播同一段 Starship 動畫，名字／職責／狀態疊在外框。見下方「StarBase」。
 
-v0.2.1 — StarBase 視覺：火箭加大、格子鋼塔、星空、光暈、加注蒸氣。
+v0.3.0 — 三段 Remotion 動畫（上台／加注／發射回收）、塔台與發射場兩個全螢幕頁、可點選的主角 agent。
 
 航班號 = 航空公司代碼 + 該 line 的**主要 issue**（runner 對照表註解中的第一個 `#N`，沒有就看進度檔）；其他 issue 顯示為藍色標籤。
 
@@ -173,29 +182,37 @@ cp examples/runner.example.sh <logsDir>/runner.sh
 
 ### StarBase
 
-機場塔台上方的夜間發射場。每個 agent 一個發射台，每個任務是一枚火箭。
+全螢幕夜間發射場。點 **AI TOWER** 標題往上翻進去；點 **StarBase 發射場** 往下翻回塔台。上次模式記在 `tower.view`。系統若要求減少動態效果（`prefers-reduced-motion`），切換是瞬間的，沒有翻轉。
 
-| Agent | 負責 | 發射設施 |
-|---|---|---|
-| 沃茲 | 桌面 App | **Starship**（不鏽鋼銀色超重型＋星艦、筷子機械臂） |
-| 克雷格 | iPhone/iPad App | **Falcon 9**（白色兩節、黑色級間段、四片格柵翼、臍帶臂） |
-| 強尼 | 設計 | **麥格雷戈測試平台**（鋼架、引擎噴口、測試台車） |
+上方大矩形是主角 agent（8:3 動畫＋任務細節），下方兩個中型矩形並排。點下方卡片會用 FLIP 平滑換到主角位置（`tower.sbFeatured`）。預設主角：有進行中或卡住任務的那位；同時多位或都沒有就是沃茲。
+
+三位 agent 都播**同一段 Starship** 動畫（超重型＋星艦、OLM-A、筷子機械臂）。沒有 Falcon 9／麥格雷戈變體，也沒有「選載具」參數。名字、職責、狀態 chip 疊在動畫外框。
+
+| Agent | 負責 |
+|---|---|
+| 沃茲 | 桌面 App |
+| 克雷格 | iPhone/iPad App |
+| 強尼 | 設計 |
 
 | 任務狀態 | 畫面 |
 |---|---|
-| 排隊（`queued` / `ready`） | 火箭立在台上，**T- 待命** |
-| 進行中（`in_progress` / `running`） | 加注：底部蒸氣、燃料條、塔燈閃爍 |
-| 卡住（`blocked`） | **HOLD · 卡住**，蒸氣停止 |
-| 完成（`done`） | `done_at` 在 90 秒內、或頁面剛看到它完成時，播一次升空，之後進 **已升空**。超過 `goodDayHideHours`（預設 6 小時）隱藏 |
+| 待命（只有排隊，或沒有進行中／卡住） | 01 吊掛上台，停在第 12 幀 |
+| 任務剛開始（排隊→進行中，或新的進行中且 `started_at` 在 90 秒內） | 01 播一次 → 02 從 0 播（含 3 秒開場）→ 02 在 90–389 循環 |
+| 頁面載入時就已經在進行中 | 02 `intro=0` 循環 |
+| 進行中 | 02 循環。任務若有 `progress`（0–1 或 0–100）會換成 `?progress=`（夾在 0.05–0.98） |
+| 卡住 | 02 暫停（剛載入則停在第 240 幀）＋灰階＋**HOLD · 卡住**。卡住→進行中會繼續播 |
+| 完成（`done_at` 在 90 秒內，或頁面剛看到進行中／卡住→完成） | 03 播一次（26 秒）→ 回到待命 01@12。任務進 **已升空**，超過 `goodDayHideHours` 隱藏 |
+| 排隊組合 | 01 播到一半就完成 → 01 播完直接接 03。03 播到一半又有新的進行中 → 03 播完接 01→02 |
+| `prefers-reduced-motion` | 全部靜態：待命 01@12；進行中 02@240；卡住 02@240＋HOLD；完成 03@640 停 6 秒後回待命 |
 
 狀態檔由 agent 自己寫，塔台只讀。
 
 - 路徑：`starbaseDir`／`<agent>.json`（預設 `{logsDir}/starbase/agents/`）。
 - 格式：單一物件、物件陣列、或 `{ "tasks": [...] }`。
-- 欄位：`agent`、`task`、`status`、`started_at`、`updated_at`、`done_at`、`link`（只接受 http/https）、`note`。
+- 欄位：`agent`、`task`、`status`、`started_at`、`updated_at`、`done_at`、`link`（只接受 http/https）、`note`、可選 `progress`。
 - 寫到一半或壞 JSON：沿用上次成功讀到的內容；檔案不存在＝沒任務。
 - `GET /api/starbase`（唯讀、host 檢查、`no-store`）；同一份資料也在 `/api/strips` 的 `starbase` 欄位，前端跟著 10 秒 poll 更新。
-- 標題列可收合 StarBase（狀態存在 localStorage，預設展開）。`prefers-reduced-motion` 時關閉蒸氣／閃爍／升空。
+- 動畫播放器：`/starbase/player.html`＋共用 `/starbase/starbase.js`（快取一天）。Remotion Player 的 bundle **不進這個 repo**（[Remotion 授權](https://www.remotion.dev/license) 不是 OSI 開源授權，跟本專案的 MIT 不相容）。把 `01-stack.html`／`02-fuel.html`／`03-launch.html` 放到 `public/starbase/src/`（已 gitignore），再跑 `node tools/extract-starbase.js` 產出 `public/starbase/starbase.js`（同樣 gitignore）。沒有這些檔時，面板顯示靜態「動畫檔未安裝」佔位，chip、HOLD、主角切換照常。
 
 Helper（原子寫入，同一個 task 標題會更新同一筆）：
 
