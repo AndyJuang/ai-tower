@@ -294,15 +294,11 @@ a.fno{color:inherit;text-decoration:none}a.fno:hover{text-decoration:underline}
 }
 
 /* StarBase Raptor engine (public/starbase-raptor.js; figure © 2026 Ryan, MIT — public/starbase/raptor/LICENSE-anatomy.txt) */
-.sb-raptor{flex:none;height:120px;background:#05070d;border-bottom:1px solid #000;display:grid;place-items:center;overflow:hidden}
-.sb-pad.featured .sb-raptor{height:220px}
+.sb-pad .sb-scene{aspect-ratio:auto;width:100%;height:100%}
+.sb-raptor{position:absolute;inset:0;background:#05070d;display:grid;place-items:center;overflow:hidden}
+.sb-raptor[data-state=idle]{opacity:.35;filter:grayscale(.8)}
 .sb-raptor iframe{width:100%;height:100%;border:0;display:block;background:transparent}
-.sb-raptor-static{height:88%;width:auto}
+.sb-raptor-static{height:86%;width:auto;max-width:96%}
 .sb-raptor[data-state=launch] .sb-raptor-static{filter:drop-shadow(0 0 6px #ffb547)}
 .sb-raptor-toggle{margin-left:8px;background:#111a30;color:#cfd8ee;border:1px solid #1c2742;border-radius:4px;padding:3px 8px;font:600 11px var(--sans);cursor:pointer}
 .sb-raptor-toggle[aria-pressed=false]{color:#6b7899}
-/* Lower pads: the info strip is clipped to 72px, which hid the engine box. Give working pads room; idle pads stay compact. */
-.sb-pad.sub-1 .sb-raptor,.sb-pad.sub-2 .sb-raptor{height:100px}
-.sb-pad.sub-1 .sb-info:has(.sb-raptor[data-state=assembling]),.sb-pad.sub-2 .sb-info:has(.sb-raptor[data-state=assembling]),
-.sb-pad.sub-1 .sb-info:has(.sb-raptor[data-state=launch]),.sb-pad.sub-2 .sb-info:has(.sb-raptor[data-state=launch]){max-height:176px}
-.sb-pad.sub-1 .sb-raptor[data-state=idle],.sb-pad.sub-2 .sb-raptor[data-state=idle]{display:none}

@@ -120,7 +120,9 @@ check('dual iframe pads, never rebuilt on poll', () => {
   if (!/dataset\.started/.test(js)) throw new Error('started signature so once-clips are not restarted');
   if (!/cmd: 'resume'|cmd:'resume'/.test(js)) throw new Error('resume instead of replay');
   if (!/refreshPadChrome/.test(js)) throw new Error('chip refresh on ended');
-  if (!/動畫檔未安裝/.test(js)) throw new Error('missing-bundle placeholder');
+  // Raptor branch: pads no longer mount the old scene player; the scene area is the Raptor engine.
+  if (/動畫檔未安裝/.test(js)) throw new Error('old missing-bundle placeholder still present');
+  if (!/class="sb-raptor"/.test(js)) throw new Error('raptor fills scene');
 });
 
 check('featured agent FLIP + localStorage', () => {

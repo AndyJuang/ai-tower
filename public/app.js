@@ -304,7 +304,7 @@
     const el = document.createElement('article');
     el.className = 'sb-pad';
     el.dataset.agent = agent.name;
-    el.innerHTML = `<div class="sb-visual"><div class="sb-scene"><div class="sb-hold-bar"></div><div class="sb-hold-tag">HOLD · 卡住</div><div class="sb-missing" hidden><strong>動畫檔未安裝</strong><span>把 01-stack.html／02-fuel.html／03-launch.html 放到 public/starbase/src/，再執行 node tools/extract-starbase.js</span></div></div></div>
+    el.innerHTML = `<div class="sb-visual"><div class="sb-scene"><div class="sb-raptor" data-state="idle"></div><div class="sb-hold-bar"></div><div class="sb-hold-tag">HOLD · 卡住</div></div></div>
       <div class="sb-info">
         <header class="sb-pad-head"><span class="nm"></span><span class="role"></span><span class="chip"></span></header>
         <div class="sb-main-task"><span class="ttl"></span><span class="when"></span></div>
@@ -314,12 +314,9 @@
         <ol class="sb-flown"></ol>
         <p class="sb-err" hidden></p>
       </div>`;
-    const scene = el.querySelector('.sb-scene');
-    const a = makeIframe(agent.name, 'a');
-    const b = makeIframe(agent.name, 'b');
-    scene.insertBefore(b, scene.firstChild);
-    scene.insertBefore(a, scene.firstChild);
-    SB_PLAYERS.set(agent.name, { el, a, b, show: 'a', state: null, pending: null, swapOn: 'ready', wantPlay: false, missing: false });
+    // Old 01-stack/02-fuel/03-launch player removed: the scene area is the Raptor engine (StarbaseRaptor fills .sb-raptor).
+    // StarbaseState still drives chips/hold; missing:true makes applyPadPlayer skip all iframe work.
+    SB_PLAYERS.set(agent.name, { el, a: null, b: null, show: 'a', state: null, pending: null, swapOn: 'ready', wantPlay: false, missing: true });
     el.addEventListener('click', e => {
       if (el.classList.contains('featured')) return;
       if (e.target.closest('a')) return;
@@ -409,10 +406,11 @@
     else loadClip(hid, st);
   }
   function syncPlayback() {
-    SB_PLAYERS.forEach(p => { if (p.state) driveIframe(p, p[p.show], p.state); });
+    SB_PLAYERS.forEach(p => { if (p.state && p[p.show]) driveIframe(p, p[p.show], p.state); });
   }
   function currentFrame(p) {
     try {
+      if (!p[p.show]) return null;
       const w = p[p.show].contentWindow;
       if (w && w.__player && w.__player.getCurrentFrame) return w.__player.getCurrentFrame();
     } catch (e) {}
@@ -429,7 +427,7 @@
     SB_PLAYERS.forEach(p => {
       ['a', 'b'].forEach(buf => {
         const f = p[buf];
-        if (f.contentWindow !== e.source) return;
+        if (!f || f.contentWindow !== e.source) return;
         if (d.ev === 'error') {
           p.missing = true;
           const miss = p.el.querySelector('.sb-missing');
