@@ -14,6 +14,7 @@
   var LAND_WINDOW_MS = 10 * 60 * 1000; // a done task this fresh counts as "just landed"
   var TOGGLE_KEY = 'starbase.raptor';
   var SEEN_KEY = 'starbase.raptor.landed';
+  var IDLE_IMG = '/starbase/raptor/idle.png'; // assembled engine, used when a pad has no live iframe
 
   function clamp(x, a, b) { return x < a ? a : x > b ? b : x; }
   function num(v) { if (v == null || v === '') return null; var n = Number(v); return isFinite(n) ? n : null; }
@@ -107,18 +108,19 @@
     function send(s, msg) { if (!s.frame) return; if (s.ready) s.frame.contentWindow.postMessage(msg, location.origin); else s.queue.push(msg); }
     function push(s) { if (s.launching) return; var p = Math.round(s.progress * 1000) / 1000; if (p !== s.sent) { s.sent = p; send(s, { cmd: 'progress', value: p }); } }
     function mountFrame(s) {
+      s.box.dataset.painted = 'frame';
       var f = document.createElement('iframe');
       f.name = 'raptor-' + s.key; f.src = src; f.title = 'Raptor engine · ' + s.key; f.setAttribute('aria-hidden', 'true'); f.tabIndex = -1;
       s.frame = f; s.ready = false; s.queue = []; s.sent = -1;
       s.box.replaceChildren(f); push(s);
     }
     function unmountFrame(s) { if (s.frame) { s.frame.src = 'about:blank'; s.frame.remove(); } s.frame = null; s.ready = false; s.launching = false; }
-    function paintStatic(s) { s.box.innerHTML = staticSvg(s.progress); }
+    function paintStatic(s) { if (s.box.dataset.painted !== 'img') { s.box.innerHTML = '<img class="sb-raptor-static" src="' + IDLE_IMG + '" alt="Raptor engine" draggable="false">'; s.box.dataset.painted = 'img'; } }
 
     function reconcile() {
       var live = enabled() && !reducedMotion() && !document.hidden && (!opts.isLive || opts.isLive());
       var list = Array.from(pads.values());
-      var keep = live ? allocate(list.map(function (s) { return { key: s.key, visible: s.visible, active: s.active, featured: s.featured, launching: s.launching }; }), max) : new Set();
+      var keep = live ? allocate(list.map(function (s) { return { key: s.key, visible: s.visible && (s.active || s.launching), active: s.active, featured: s.featured, launching: s.launching }; }), max) : new Set();
       list.forEach(function (s) {
         s.box.dataset.mode = keep.has(s.key) ? 'live' : 'static';
         if (keep.has(s.key)) { if (!s.frame) mountFrame(s); else push(s); }

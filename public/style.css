@@ -297,9 +297,9 @@ a.fno{color:inherit;text-decoration:none}a.fno:hover{text-decoration:underline}
 .sb-pad .sb-scene{aspect-ratio:auto;width:100%;height:100%;background:#f2f2ef}
 .sb-pad .sb-visual{background:#f2f2ef}
 .sb-raptor{position:absolute;inset:0;background:#f2f2ef;display:grid;place-items:center;overflow:hidden}
-.sb-raptor[data-state=idle] iframe{opacity:.45;filter:grayscale(1)}
+.sb-raptor[data-state=idle] iframe,.sb-raptor[data-state=idle] .sb-raptor-static{opacity:.7;filter:grayscale(1)}
 .sb-raptor iframe{width:100%;height:100%;border:0;display:block;background:transparent}
-.sb-raptor-static{height:86%;width:auto;max-width:96%}
+.sb-raptor-static{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block}
 .sb-raptor[data-state=launch] .sb-raptor-static{filter:drop-shadow(0 0 6px #ffb547)}
 .sb-raptor-toggle{margin-left:8px;background:#111a30;color:#cfd8ee;border:1px solid #1c2742;border-radius:4px;padding:3px 8px;font:600 11px var(--sans);cursor:pointer}
 .sb-raptor-toggle[aria-pressed=false]{color:#6b7899}
