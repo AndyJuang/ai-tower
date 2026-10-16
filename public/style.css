@@ -301,3 +301,8 @@ a.fno{color:inherit;text-decoration:none}a.fno:hover{text-decoration:underline}
 .sb-raptor[data-state=launch] .sb-raptor-static{filter:drop-shadow(0 0 6px #ffb547)}
 .sb-raptor-toggle{margin-left:8px;background:#111a30;color:#cfd8ee;border:1px solid #1c2742;border-radius:4px;padding:3px 8px;font:600 11px var(--sans);cursor:pointer}
 .sb-raptor-toggle[aria-pressed=false]{color:#6b7899}
+/* Lower pads: the info strip is clipped to 72px, which hid the engine box. Give working pads room; idle pads stay compact. */
+.sb-pad.sub-1 .sb-raptor,.sb-pad.sub-2 .sb-raptor{height:100px}
+.sb-pad.sub-1 .sb-info:has(.sb-raptor[data-state=assembling]),.sb-pad.sub-2 .sb-info:has(.sb-raptor[data-state=assembling]),
+.sb-pad.sub-1 .sb-info:has(.sb-raptor[data-state=launch]),.sb-pad.sub-2 .sb-info:has(.sb-raptor[data-state=launch]){max-height:176px}
+.sb-pad.sub-1 .sb-raptor[data-state=idle],.sb-pad.sub-2 .sb-raptor[data-state=idle]{display:none}
