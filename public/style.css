@@ -294,9 +294,10 @@ a.fno{color:inherit;text-decoration:none}a.fno:hover{text-decoration:underline}
 }
 
 /* StarBase Raptor engine (public/starbase-raptor.js; figure © 2026 Ryan, MIT — public/starbase/raptor/LICENSE-anatomy.txt) */
-.sb-pad .sb-scene{aspect-ratio:auto;width:100%;height:100%}
-.sb-raptor{position:absolute;inset:0;background:#05070d;display:grid;place-items:center;overflow:hidden}
-.sb-raptor[data-state=idle]{opacity:.35;filter:grayscale(.8)}
+.sb-pad .sb-scene{aspect-ratio:auto;width:100%;height:100%;background:#f2f2ef}
+.sb-pad .sb-visual{background:#f2f2ef}
+.sb-raptor{position:absolute;inset:0;background:#f2f2ef;display:grid;place-items:center;overflow:hidden}
+.sb-raptor[data-state=idle] iframe{opacity:.45;filter:grayscale(1)}
 .sb-raptor iframe{width:100%;height:100%;border:0;display:block;background:transparent}
 .sb-raptor-static{height:86%;width:auto;max-width:96%}
 .sb-raptor[data-state=launch] .sb-raptor-static{filter:drop-shadow(0 0 6px #ffb547)}

@@ -67,12 +67,12 @@
   function staticSvg(p) {
     var n = Math.round(clamp(p || 0, 0, 1) * 11);
     var bars = '';
-    for (var i = 0; i < 11; i++) bars += '<rect x="' + (8 + i * 8) + '" y="92" width="6" height="5" rx="1" fill="' + (i < n ? '#ffb547' : '#1c2742') + '"/>';
+    for (var i = 0; i < 11; i++) bars += '<rect x="' + (8 + i * 8) + '" y="92" width="6" height="5" rx="1" fill="' + (i < n ? '#ffb547' : '#d4d4d6') + '"/>';
     return '<svg class="sb-raptor-static" viewBox="0 0 104 104" role="img" aria-label="Raptor ' + n + '/11">' +
-      '<g fill="none" stroke="#6b7899" stroke-width="2" stroke-linejoin="round">' +
+      '<g fill="none" stroke="#8a8a8f" stroke-width="2" stroke-linejoin="round">' +
       '<rect x="40" y="8" width="24" height="14" rx="3"/><path d="M44 22h16v10H44z"/><path d="M46 32h12l4 10H42z"/>' +
-      '<path d="M42 42h20l14 40H28z" stroke="#cfd8ee"/></g>' +
-      '<text x="52" y="66" text-anchor="middle" font-size="9" fill="#6b7899" font-family="monospace">' + n + '/11</text>' + bars + '</svg>';
+      '<path d="M42 42h20l14 40H28z" stroke="#26262a"/></g>' +
+      '<text x="52" y="66" text-anchor="middle" font-size="9" fill="#8a8a8f" font-family="monospace">' + n + '/11</text>' + bars + '</svg>';
   }
 
   // ---------- browser controller ----------
