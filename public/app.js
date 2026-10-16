@@ -166,6 +166,12 @@
     return (sb && sb.hash) || SB_ASSET_V || 'sb';
   }
   const SB_PLAYERS = new Map();
+  // Raptor engine per pad (public/starbase-raptor.js): capped live iframes, IntersectionObserver, reduced-motion, toggle.
+  const RAPTOR = (typeof StarbaseRaptor !== 'undefined') ? StarbaseRaptor.createController({ isLive: () => playersLive() }) : null;
+  function syncRaptorToggle() {
+    const b = $('#sb-raptor-toggle'); if (!b || typeof StarbaseRaptor === 'undefined') return;
+    const on = StarbaseRaptor.enabled(); b.setAttribute('aria-pressed', on ? 'true' : 'false'); b.textContent = on ? 'Raptor 動畫：開' : 'Raptor 動畫：關';
+  }
   const SB_CHIP = { queued: 'T- 待命', in_progress: '加注中', blocked: 'HOLD · 卡住', done: '已升空', empty: '待命', stack: '上台中', launch: '升空' };
   function reducedMotion() { return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches; }
   function sbAgo(t) {
@@ -298,7 +304,7 @@
     const el = document.createElement('article');
     el.className = 'sb-pad';
     el.dataset.agent = agent.name;
-    el.innerHTML = `<div class="sb-visual"><div class="sb-scene"><div class="sb-hold-bar"></div><div class="sb-hold-tag">HOLD · 卡住</div><div class="sb-missing" hidden><strong>動畫檔未安裝</strong><span>把 01-stack.html／02-fuel.html／03-launch.html 放到 public/starbase/src/，再執行 node tools/extract-starbase.js</span></div></div></div>
+    el.innerHTML = `<div class="sb-visual"><div class="sb-scene"><div class="sb-raptor" data-state="idle"></div><div class="sb-hold-bar"></div><div class="sb-hold-tag">HOLD · 卡住</div></div></div>
       <div class="sb-info">
         <header class="sb-pad-head"><span class="nm"></span><span class="role"></span><span class="chip"></span></header>
         <div class="sb-main-task"><span class="ttl"></span><span class="when"></span></div>
@@ -308,12 +314,9 @@
         <ol class="sb-flown"></ol>
         <p class="sb-err" hidden></p>
       </div>`;
-    const scene = el.querySelector('.sb-scene');
-    const a = makeIframe(agent.name, 'a');
-    const b = makeIframe(agent.name, 'b');
-    scene.insertBefore(b, scene.firstChild);
-    scene.insertBefore(a, scene.firstChild);
-    SB_PLAYERS.set(agent.name, { el, a, b, show: 'a', state: null, pending: null, swapOn: 'ready', wantPlay: false, missing: false });
+    // Old 01-stack/02-fuel/03-launch player removed: the scene area is the Raptor engine (StarbaseRaptor fills .sb-raptor).
+    // StarbaseState still drives chips/hold; missing:true makes applyPadPlayer skip all iframe work.
+    SB_PLAYERS.set(agent.name, { el, a: null, b: null, show: 'a', state: null, pending: null, swapOn: 'ready', wantPlay: false, missing: true });
     el.addEventListener('click', e => {
       if (el.classList.contains('featured')) return;
       if (e.target.closest('a')) return;
@@ -403,10 +406,12 @@
     else loadClip(hid, st);
   }
   function syncPlayback() {
-    SB_PLAYERS.forEach(p => { if (p.state) driveIframe(p, p[p.show], p.state); });
+    SB_PLAYERS.forEach(p => { if (p.state && p[p.show]) driveIframe(p, p[p.show], p.state); });
+    if (RAPTOR) RAPTOR.refresh(); // view switch changes playersLive()
   }
   function currentFrame(p) {
     try {
+      if (!p[p.show]) return null;
       const w = p[p.show].contentWindow;
       if (w && w.__player && w.__player.getCurrentFrame) return w.__player.getCurrentFrame();
     } catch (e) {}
@@ -423,7 +428,7 @@
     SB_PLAYERS.forEach(p => {
       ['a', 'b'].forEach(buf => {
         const f = p[buf];
-        if (f.contentWindow !== e.source) return;
+        if (!f || f.contentWindow !== e.source) return;
         if (d.ev === 'error') {
           p.missing = true;
           const miss = p.el.querySelector('.sb-missing');
@@ -562,7 +567,9 @@
       const st = StarbaseState.next({ prev: p.state, tasks: a.tasks || [], now: now(), reduced: reducedMotion(), event: 'tick', frame: currentFrame(p) });
       applyPadPlayer(p, st);
       updatePadInfo(p.el, a, st);
+      if (RAPTOR) RAPTOR.sync(a.name, p.el, a.tasks || [], { featured: p.el.classList.contains('featured') });
     });
+    if (RAPTOR) RAPTOR.prune(have);
   }
 
   // ---------- render ----------
@@ -858,9 +865,40 @@
   document.addEventListener('visibilitychange', syncPlayback);
   { const t = $('#tower-title'); if (t) t.addEventListener('click', () => setView('starbase', true)); }
   { const t = $('#sb-title'); if (t) t.addEventListener('click', () => setView('tower', true)); }
+  { const b = $('#sb-raptor-toggle'); if (b && typeof StarbaseRaptor !== 'undefined') { syncRaptorToggle(); b.addEventListener('click', () => { StarbaseRaptor.setEnabled(!StarbaseRaptor.enabled()); syncRaptorToggle(); if (RAPTOR) RAPTOR.refresh(); }); } }
+  // Manual state panel for the Raptor engine (testing): per-pad idle / progress / launch, or back to real job data.
+  { const btn = $('#sb-raptor-debug'); if (btn && RAPTOR) {
+    const panel = document.createElement('div'); panel.className = 'sb-raptor-panel'; panel.hidden = true;
+    panel.innerHTML = '<div class="rp-head"><b>Raptor 狀態測試</b><button type="button" data-a="close" aria-label="關閉">×</button></div>' +
+      '<label class="rp-row">發射台 <select class="rp-pad"></select></label>' +
+      '<div class="rp-row rp-btns"><button type="button" data-a="idle">待命</button>' +
+      [10, 25, 50, 75, 95].map(v => '<button type="button" data-a="p" data-v="' + v + '">' + v + '%</button>').join('') +
+      '<button type="button" data-a="launch" class="rp-go">發射</button></div>' +
+      '<label class="rp-row">進度 <input type="range" class="rp-range" min="0" max="100" value="0"><output class="rp-out">0%</output></label>' +
+      '<div class="rp-row rp-btns"><button type="button" data-a="auto">此台恢復自動</button><button type="button" data-a="autoAll">全部恢復自動</button></div>' +
+      '<div class="rp-note">手動模式下會忽略真實任務資料。</div>';
+    document.body.appendChild(panel);
+    const sel = panel.querySelector('.rp-pad'), range = panel.querySelector('.rp-range'), out = panel.querySelector('.rp-out');
+    const fill = () => { const cur = sel.value, ks = RAPTOR.keys(); sel.innerHTML = ks.map(k => '<option value="' + k + '"' + (k === cur ? ' selected' : '') + '>' + k + '</option>').join(''); };
+    const mark = () => { [...sel.options].forEach(o => { o.textContent = o.value + (RAPTOR.manualState(o.value) ? '（手動）' : ''); }); };
+    btn.addEventListener('click', () => { panel.hidden = !panel.hidden; if (!panel.hidden) { fill(); mark(); } btn.setAttribute('aria-pressed', panel.hidden ? 'false' : 'true'); });
+    range.addEventListener('input', () => { out.textContent = range.value + '%'; if (sel.value) { RAPTOR.manual(sel.value, 'progress', range.value / 100); mark(); } });
+    panel.addEventListener('click', ev => {
+      const b = ev.target.closest('button'); if (!b) return; const a = b.dataset.a, k = sel.value;
+      if (a === 'close') { panel.hidden = true; btn.setAttribute('aria-pressed', 'false'); return; }
+      if (a === 'autoAll') RAPTOR.keys().forEach(x => RAPTOR.manual(x, 'auto'));
+      else if (!k) return;
+      else if (a === 'idle') { RAPTOR.manual(k, 'idle'); range.value = 0; out.textContent = '0%'; }
+      else if (a === 'p') { RAPTOR.manual(k, 'progress', b.dataset.v / 100); range.value = b.dataset.v; out.textContent = b.dataset.v + '%'; }
+      else if (a === 'launch') RAPTOR.manual(k, 'launch');
+      else if (a === 'auto') RAPTOR.manual(k, 'auto');
+      mark();
+    });
+  } }
+  document.addEventListener('visibilitychange', () => { if (RAPTOR) RAPTOR.refresh(); });
   setView(viewMode(), false);
   { const mq = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null;
-    if (mq) { const fn = () => { if (data) renderStarbase(); }; mq.addEventListener ? mq.addEventListener('change', fn) : mq.addListener(fn); } }
+    if (mq) { const fn = () => { if (data) renderStarbase(); if (RAPTOR) RAPTOR.refresh(); }; mq.addEventListener ? mq.addEventListener('change', fn) : mq.addListener(fn); } }
   load(); if (!FROZEN) setInterval(load, POLL);
   tick();
 })();
