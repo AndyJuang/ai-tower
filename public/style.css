@@ -303,3 +303,16 @@ a.fno{color:inherit;text-decoration:none}a.fno:hover{text-decoration:underline}
 .sb-raptor[data-state=launch] .sb-raptor-static{filter:drop-shadow(0 0 6px #ffb547)}
 .sb-raptor-toggle{margin-left:8px;background:#111a30;color:#cfd8ee;border:1px solid #1c2742;border-radius:4px;padding:3px 8px;font:600 11px var(--sans);cursor:pointer}
 .sb-raptor-toggle[aria-pressed=false]{color:#6b7899}
+#sb-raptor-debug[aria-pressed=true]{color:#ffb547;border-color:#ffb547}
+.sb-raptor-panel{position:fixed;right:16px;bottom:16px;z-index:50;width:290px;background:#0d1426;color:#cfd8ee;border:1px solid #1c2742;border-radius:8px;padding:10px 12px;font:12px var(--sans);box-shadow:0 8px 28px #000a}
+.sb-raptor-panel[hidden]{display:none}
+.sb-raptor-panel .rp-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.sb-raptor-panel .rp-row{display:flex;align-items:center;gap:6px;margin:6px 0}
+.sb-raptor-panel .rp-btns{flex-wrap:wrap}
+.sb-raptor-panel button{background:#111a30;color:#cfd8ee;border:1px solid #1c2742;border-radius:4px;padding:4px 9px;font:600 11px var(--sans);cursor:pointer}
+.sb-raptor-panel button:hover{border-color:#3a4c7a}
+.sb-raptor-panel .rp-go{background:#7a2a12;border-color:#ff7a45;color:#fff}
+.sb-raptor-panel select{flex:1;background:#111a30;color:#cfd8ee;border:1px solid #1c2742;border-radius:4px;padding:3px}
+.sb-raptor-panel .rp-range{flex:1}
+.sb-raptor-panel .rp-out{width:34px;text-align:right}
+.sb-raptor-panel .rp-note{color:#6b7899;font-size:11px;margin-top:6px}

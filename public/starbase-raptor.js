@@ -118,9 +118,11 @@
     function paintStatic(s) { if (s.box.dataset.painted !== 'img') { s.box.innerHTML = '<img class="sb-raptor-static" src="' + IDLE_IMG + '" alt="Raptor engine" draggable="false">'; s.box.dataset.painted = 'img'; } }
 
     function reconcile() {
-      var live = enabled() && !reducedMotion() && !document.hidden && (!opts.isLive || opts.isLive());
+      var live = enabled() && !document.hidden && (!opts.isLive || opts.isLive());
+      var rm = reducedMotion();
       var list = Array.from(pads.values());
-      var keep = live ? allocate(list.map(function (s) { return { key: s.key, visible: s.visible && (s.active || s.launching), active: s.active, featured: s.featured, launching: s.launching }; }), max) : new Set();
+      // reduced-motion pads stay static unless the user drives them by hand from the debug panel
+      var keep = live ? allocate(list.map(function (s) { return { key: s.key, visible: s.visible && (s.active || s.launching) && (!rm || !!s.manual), active: s.active, featured: s.featured, launching: s.launching }; }), max) : new Set();
       list.forEach(function (s) {
         s.box.dataset.mode = keep.has(s.key) ? 'live' : 'static';
         if (keep.has(s.key)) { if (!s.frame) mountFrame(s); else push(s); }
@@ -140,7 +142,16 @@
       }
       var now = Date.now();
       var job = activeJob(tasks);
-      s.active = !!job; s.featured = !!(info && info.featured);
+      s.featured = !!(info && info.featured);
+      if (s.manual) { // manual override from the debug panel: ignore real job data, but still mark landings seen
+        s.active = s.manual.active; if (!s.launching) s.progress = s.manual.progress;
+        newLandings(tasks, seen, s.running, now); saveSeen();
+        s.running = new Set();
+        s.box.dataset.state = s.launching ? 'launch' : (s.active ? 'assembling' : 'idle'); s.box.dataset.manual = '1';
+        schedule(); return;
+      }
+      delete s.box.dataset.manual;
+      s.active = !!job;
       if (!s.launching) s.progress = job ? jobProgress(job, now) : 0;
       var landed = newLandings(tasks, seen, s.running, now);
       s.running = new Set((tasks || []).filter(function (t) { return t && t.status === 'in_progress'; }).map(function (t) { return t.id; }));
@@ -155,8 +166,27 @@
       s.box.dataset.state = job ? 'assembling' : 'idle';
       schedule();
     }
+    // ----- manual control (debug panel) -----
+    // mode: 'idle' | 'progress' (value 0..1) | 'launch' | 'auto' (back to real job data)
+    function manual(key, mode, value) {
+      var s = pads.get(key); if (!s) return;
+      if (mode === 'auto') { s.manual = null; delete s.box.dataset.manual; s.launching = false; s.sent = -1; if (s.frame) send(s, { cmd: 'reset' }); schedule(); return; }
+      if (s.launching && s.frame) { send(s, { cmd: 'reset' }); s.launching = false; s.sent = -1; }
+      if (mode === 'idle') { s.manual = { active: false, progress: 0 }; s.progress = 0; if (s.frame) send(s, { cmd: 'reset' }); s.sent = -1; }
+      else if (mode === 'progress') { s.manual = { active: true, progress: clamp(+value || 0, 0, 1) }; s.progress = s.manual.progress; }
+      else if (mode === 'launch') {
+        s.manual = { active: true, progress: 1 }; s.active = true; s.progress = 1; s.launching = true; s.box.dataset.state = 'launch';
+        reconcile();
+        if (s.frame) { send(s, { cmd: 'progress', value: 1 }); send(s, { cmd: 'complete' }); } else s.launching = false;
+        return;
+      }
+      s.active = s.manual.active; s.box.dataset.manual = '1'; s.box.dataset.state = s.active ? 'assembling' : 'idle';
+      reconcile();
+    }
+    function keys() { return Array.from(pads.keys()); }
+    function manualState(key) { var s = pads.get(key); return s && s.manual ? s.manual : null; }
     function prune(keys) { pads.forEach(function (s, k) { if (!keys.has(k)) { unmountFrame(s); if (io) io.unobserve(s.box); pads.delete(k); } }); }
-    return { sync: sync, prune: prune, refresh: schedule, _pads: pads, _seen: seen };
+    return { sync: sync, prune: prune, manual: manual, keys: keys, manualState: manualState, refresh: schedule, _pads: pads, _seen: seen };
   }
 
   return {

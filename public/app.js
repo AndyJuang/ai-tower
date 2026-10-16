@@ -866,6 +866,35 @@
   { const t = $('#tower-title'); if (t) t.addEventListener('click', () => setView('starbase', true)); }
   { const t = $('#sb-title'); if (t) t.addEventListener('click', () => setView('tower', true)); }
   { const b = $('#sb-raptor-toggle'); if (b && typeof StarbaseRaptor !== 'undefined') { syncRaptorToggle(); b.addEventListener('click', () => { StarbaseRaptor.setEnabled(!StarbaseRaptor.enabled()); syncRaptorToggle(); if (RAPTOR) RAPTOR.refresh(); }); } }
+  // Manual state panel for the Raptor engine (testing): per-pad idle / progress / launch, or back to real job data.
+  { const btn = $('#sb-raptor-debug'); if (btn && RAPTOR) {
+    const panel = document.createElement('div'); panel.className = 'sb-raptor-panel'; panel.hidden = true;
+    panel.innerHTML = '<div class="rp-head"><b>Raptor 狀態測試</b><button type="button" data-a="close" aria-label="關閉">×</button></div>' +
+      '<label class="rp-row">發射台 <select class="rp-pad"></select></label>' +
+      '<div class="rp-row rp-btns"><button type="button" data-a="idle">待命</button>' +
+      [10, 25, 50, 75, 95].map(v => '<button type="button" data-a="p" data-v="' + v + '">' + v + '%</button>').join('') +
+      '<button type="button" data-a="launch" class="rp-go">發射</button></div>' +
+      '<label class="rp-row">進度 <input type="range" class="rp-range" min="0" max="100" value="0"><output class="rp-out">0%</output></label>' +
+      '<div class="rp-row rp-btns"><button type="button" data-a="auto">此台恢復自動</button><button type="button" data-a="autoAll">全部恢復自動</button></div>' +
+      '<div class="rp-note">手動模式下會忽略真實任務資料。</div>';
+    document.body.appendChild(panel);
+    const sel = panel.querySelector('.rp-pad'), range = panel.querySelector('.rp-range'), out = panel.querySelector('.rp-out');
+    const fill = () => { const cur = sel.value, ks = RAPTOR.keys(); sel.innerHTML = ks.map(k => '<option value="' + k + '"' + (k === cur ? ' selected' : '') + '>' + k + '</option>').join(''); };
+    const mark = () => { [...sel.options].forEach(o => { o.textContent = o.value + (RAPTOR.manualState(o.value) ? '（手動）' : ''); }); };
+    btn.addEventListener('click', () => { panel.hidden = !panel.hidden; if (!panel.hidden) { fill(); mark(); } btn.setAttribute('aria-pressed', panel.hidden ? 'false' : 'true'); });
+    range.addEventListener('input', () => { out.textContent = range.value + '%'; if (sel.value) { RAPTOR.manual(sel.value, 'progress', range.value / 100); mark(); } });
+    panel.addEventListener('click', ev => {
+      const b = ev.target.closest('button'); if (!b) return; const a = b.dataset.a, k = sel.value;
+      if (a === 'close') { panel.hidden = true; btn.setAttribute('aria-pressed', 'false'); return; }
+      if (a === 'autoAll') RAPTOR.keys().forEach(x => RAPTOR.manual(x, 'auto'));
+      else if (!k) return;
+      else if (a === 'idle') { RAPTOR.manual(k, 'idle'); range.value = 0; out.textContent = '0%'; }
+      else if (a === 'p') { RAPTOR.manual(k, 'progress', b.dataset.v / 100); range.value = b.dataset.v; out.textContent = b.dataset.v + '%'; }
+      else if (a === 'launch') RAPTOR.manual(k, 'launch');
+      else if (a === 'auto') RAPTOR.manual(k, 'auto');
+      mark();
+    });
+  } }
   document.addEventListener('visibilitychange', () => { if (RAPTOR) RAPTOR.refresh(); });
   setView(viewMode(), false);
   { const mq = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null;
