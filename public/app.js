@@ -407,6 +407,7 @@
   }
   function syncPlayback() {
     SB_PLAYERS.forEach(p => { if (p.state && p[p.show]) driveIframe(p, p[p.show], p.state); });
+    if (RAPTOR) RAPTOR.refresh(); // view switch changes playersLive()
   }
   function currentFrame(p) {
     try {
