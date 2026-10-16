@@ -166,6 +166,12 @@
     return (sb && sb.hash) || SB_ASSET_V || 'sb';
   }
   const SB_PLAYERS = new Map();
+  // Raptor engine per pad (public/starbase-raptor.js): capped live iframes, IntersectionObserver, reduced-motion, toggle.
+  const RAPTOR = (typeof StarbaseRaptor !== 'undefined') ? StarbaseRaptor.createController({ isLive: () => playersLive() }) : null;
+  function syncRaptorToggle() {
+    const b = $('#sb-raptor-toggle'); if (!b || typeof StarbaseRaptor === 'undefined') return;
+    const on = StarbaseRaptor.enabled(); b.setAttribute('aria-pressed', on ? 'true' : 'false'); b.textContent = on ? 'Raptor 動畫：開' : 'Raptor 動畫：關';
+  }
   const SB_CHIP = { queued: 'T- 待命', in_progress: '加注中', blocked: 'HOLD · 卡住', done: '已升空', empty: '待命', stack: '上台中', launch: '升空' };
   function reducedMotion() { return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches; }
   function sbAgo(t) {
@@ -562,7 +568,9 @@
       const st = StarbaseState.next({ prev: p.state, tasks: a.tasks || [], now: now(), reduced: reducedMotion(), event: 'tick', frame: currentFrame(p) });
       applyPadPlayer(p, st);
       updatePadInfo(p.el, a, st);
+      if (RAPTOR) RAPTOR.sync(a.name, p.el, a.tasks || [], { featured: p.el.classList.contains('featured') });
     });
+    if (RAPTOR) RAPTOR.prune(have);
   }
 
   // ---------- render ----------
@@ -858,9 +866,11 @@
   document.addEventListener('visibilitychange', syncPlayback);
   { const t = $('#tower-title'); if (t) t.addEventListener('click', () => setView('starbase', true)); }
   { const t = $('#sb-title'); if (t) t.addEventListener('click', () => setView('tower', true)); }
+  { const b = $('#sb-raptor-toggle'); if (b && typeof StarbaseRaptor !== 'undefined') { syncRaptorToggle(); b.addEventListener('click', () => { StarbaseRaptor.setEnabled(!StarbaseRaptor.enabled()); syncRaptorToggle(); if (RAPTOR) RAPTOR.refresh(); }); } }
+  document.addEventListener('visibilitychange', () => { if (RAPTOR) RAPTOR.refresh(); });
   setView(viewMode(), false);
   { const mq = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null;
-    if (mq) { const fn = () => { if (data) renderStarbase(); }; mq.addEventListener ? mq.addEventListener('change', fn) : mq.addListener(fn); } }
+    if (mq) { const fn = () => { if (data) renderStarbase(); if (RAPTOR) RAPTOR.refresh(); }; mq.addEventListener ? mq.addEventListener('change', fn) : mq.addListener(fn); } }
   load(); if (!FROZEN) setInterval(load, POLL);
   tick();
 })();
